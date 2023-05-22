@@ -1,0 +1,8 @@
+# ninja log v5
+2	1869	1684609622555119567	CMakeFiles/sift_opencv249.dir/display.cpp.o	4915d202a4027af2
+1	1492	1684611154279447785	CMakeFiles/sift_opencv249.dir/main.cpp.o	1d1d1be7e6fdf834
+2	1328	1684610170812710239	CMakeFiles/sift_opencv249.dir/sift.cpp.o	6cf62bd7a895f30f
+1	40	1684610921165847674	CMakeFiles/sift_opencv249.dir/match.cpp.o	77e9956cc4a8ee3d
+1492	1773	1684611154563444823	sift_opencv249	fde5b825db1d13ba
+2	1196	1684728069161388991	CMakeFiles/sift_opencv249.dir/main.cpp.o	1d1d1be7e6fdf834
+1196	1470	1684728069441397546	sift_opencv249	fde5b825db1d13ba

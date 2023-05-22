@@ -1,0 +1,3 @@
+/home/guo/mypro/CV/lab4-feature-extraction/ref/migrate-sift-opencv249/cmake-build-debug/CMakeFiles/sift_opencv249.dir
+/home/guo/mypro/CV/lab4-feature-extraction/ref/migrate-sift-opencv249/cmake-build-debug/CMakeFiles/edit_cache.dir
+/home/guo/mypro/CV/lab4-feature-extraction/ref/migrate-sift-opencv249/cmake-build-debug/CMakeFiles/rebuild_cache.dir
