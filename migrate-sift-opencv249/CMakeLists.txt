@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 2.8)
+project( sift_opencv249 )
+find_package( OpenCV REQUIRED )
+include_directories( ${OpenCV_INCLUDE_DIRS} )
+add_executable( sift_opencv249 main.cpp sift.cpp sift.h match.cpp match.h display.cpp display.h )
+target_link_libraries( sift_opencv249 ${OpenCV_LIBS} )

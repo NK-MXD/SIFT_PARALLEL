@@ -1,0 +1,22 @@
+[
+{
+  "directory": "/home/guo/mypro/CV/lab4-feature-extraction/ref/migrate-sift-opencv249/build",
+  "command": "/usr/lib/ccache/g++ -isystem /usr/local/include/opencv4 -g -o CMakeFiles/sift_opencv249.dir/main.cpp.o -c /home/guo/mypro/CV/lab4-feature-extraction/ref/migrate-sift-opencv249/main.cpp",
+  "file": "/home/guo/mypro/CV/lab4-feature-extraction/ref/migrate-sift-opencv249/main.cpp"
+},
+{
+  "directory": "/home/guo/mypro/CV/lab4-feature-extraction/ref/migrate-sift-opencv249/build",
+  "command": "/usr/lib/ccache/g++ -isystem /usr/local/include/opencv4 -g -o CMakeFiles/sift_opencv249.dir/sift.cpp.o -c /home/guo/mypro/CV/lab4-feature-extraction/ref/migrate-sift-opencv249/sift.cpp",
+  "file": "/home/guo/mypro/CV/lab4-feature-extraction/ref/migrate-sift-opencv249/sift.cpp"
+},
+{
+  "directory": "/home/guo/mypro/CV/lab4-feature-extraction/ref/migrate-sift-opencv249/build",
+  "command": "/usr/lib/ccache/g++ -isystem /usr/local/include/opencv4 -g -o CMakeFiles/sift_opencv249.dir/match.cpp.o -c /home/guo/mypro/CV/lab4-feature-extraction/ref/migrate-sift-opencv249/match.cpp",
+  "file": "/home/guo/mypro/CV/lab4-feature-extraction/ref/migrate-sift-opencv249/match.cpp"
+},
+{
+  "directory": "/home/guo/mypro/CV/lab4-feature-extraction/ref/migrate-sift-opencv249/build",
+  "command": "/usr/lib/ccache/g++ -isystem /usr/local/include/opencv4 -g -o CMakeFiles/sift_opencv249.dir/display.cpp.o -c /home/guo/mypro/CV/lab4-feature-extraction/ref/migrate-sift-opencv249/display.cpp",
+  "file": "/home/guo/mypro/CV/lab4-feature-extraction/ref/migrate-sift-opencv249/display.cpp"
+}
+]
