@@ -142,9 +142,9 @@ void MySift::build_gaussian_pyramid(const Mat &init_image, vector<vector<Mat>> &
 				gauss_pyramid[0][0] = init_image;
 			else if (j == 0)
 			{
-				resize(gauss_pyramid[i - 1][3], gauss_pyramid[i][0],
-					Size(gauss_pyramid[i - 1][3].cols / 2,
-					gauss_pyramid[i - 1][3].rows / 2), 0, 0, INTER_LINEAR);
+				resize(gauss_pyramid[i - 1][nOctaveLayers - 1], gauss_pyramid[i][0],
+					Size(gauss_pyramid[i - 1][nOctaveLayers - 1].cols >> 1,
+					gauss_pyramid[i - 1][3].rows >> 1), 0, 0, INTER_LINEAR);
 			}
 			else
 			{
@@ -525,9 +525,9 @@ static void calc_sift_descriptor(const Mat &gauss_image, float main_angle, Point
 	int len = (2 * radius + 1)*(2 * radius + 1);
 	int histlen = (d + 2)*(d + 2)*(n + 2);
 	
-	AutoBuffer<float> buf(6 * len + histlen);
+	AutoBuffer<float> buf(7 * len + histlen);
 	//X保存水平差分，Y保存竖直差分，Mag保存梯度幅度，Angle保存特征点方向,W保存高斯权重
-	float *X = buf, *Y = buf + len, *Mag = Y, *Angle = Y + len, *W = Angle + len;
+	float *X = buf, *Y = X + len, *Mag = Y + len, *Angle = Mag + len, *W = Angle + len;
 	float *RBin = W + len, *CBin = RBin + len, *hist = CBin + len;
 
 	//首先清空直方图数据
