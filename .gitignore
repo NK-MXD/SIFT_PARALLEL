@@ -1,0 +1,7 @@
+.vscode/
+build/
+cmake-build-debug/
+cmake-build-release/
+image_save/
+test_images/
+position.txt

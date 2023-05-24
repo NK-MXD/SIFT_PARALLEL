@@ -5,14 +5,23 @@
 #include<opencv2/highgui/highgui.hpp>
 #include<opencv2/calib3d/calib3d.hpp>
 #include<opencv2/imgproc/imgproc.hpp>
+#include<opencv2/features2d.hpp>
 
 #include<fstream>
 #include<stdlib.h>
 #include <filesystem>
 
+void test_fusion();
+void test_with_opencv();
+
 int main(int argc,char *argv[])
 {
-	Mat image_1 = imread("/home/guo/mypro/CV/lab4-feature-extraction/ref/migrate-sift-opencv249/test_images/ucsb1.jpg", ImreadModes::IMREAD_UNCHANGED);
+    test_with_opencv();
+//	test_fusion();
+}
+
+void test_fusion() {
+    Mat image_1 = imread("/home/guo/mypro/CV/lab4-feature-extraction/ref/migrate-sift-opencv249/test_images/ucsb1.jpg", ImreadModes::IMREAD_UNCHANGED);
 	Mat image_2 = imread("/home/guo/mypro/CV/lab4-feature-extraction/ref/migrate-sift-opencv249/test_images/ucsb2.jpg", ImreadModes::IMREAD_UNCHANGED);
 //	Mat image_1 = imread("/home/guo/mypro/CV/lab4-feature-extraction/feature/assets/Lenna.png", ImreadModes::IMREAD_UNCHANGED);
 //	Mat image_2 = imread("/home/guo/mypro/CV/lab4-feature-extraction/feature/assets/Lenna.png", ImreadModes::IMREAD_UNCHANGED);
@@ -82,7 +91,7 @@ int main(int argc,char *argv[])
 		right_matchs,matched_lines);
 	double match_time_2 = ((double)getTickCount() - match_time) / getTickFrequency();
 	cout << "特征点匹配花费时间是： " << match_time_2 << "s" << endl;
-	cout << change_model << "变换矩阵是：" << endl; 
+	cout << change_model << "变换矩阵是：" << endl;
 	cout << homography << endl;
 
 	//把正确匹配点坐标写入文件中
@@ -125,5 +134,31 @@ int main(int argc,char *argv[])
 	//write_mosaic_pyramid(gauss_pyr_1, dog_pyr_1, gauss_pyr_2, dog_pyr_2, nOctaveLayers);
 
 	waitKey(0);
-	return 0;
+}
+
+void test_with_opencv() {
+    cv::Mat img1, img2, img1_gray, img2_gray;
+    std::vector<cv::KeyPoint> kpts1_m, kpts2_m, kpts1_o, kpts2_o;
+    cv::Mat desc1_m, desc2_m, desc1_o, desc2_o;
+    double t_m, t_o;
+
+    img1 = cv::imread("/home/guo/mypro/SIFT_PARALLEL/migrate-sift-opencv249/test_images/peacock.jpg");
+    img2 = cv::imread("/home/guo/mypro/SIFT_PARALLEL/migrate-sift-opencv249/test_images/peacock.jpg");
+    cv::cvtColor(img1, img1_gray, cv::COLOR_BGR2GRAY);
+    cv::cvtColor(img2, img2_gray, cv::COLOR_BGR2GRAY);
+
+    MySift *sift_m = new MySift();
+    std::vector<std::vector<cv::Mat>> gpyr, dogpyr;
+    t_m = (double)cv::getTickCount();
+    sift_m->detect(img1_gray, gpyr, dogpyr, kpts1_m);
+    sift_m->comput_des(gpyr, kpts1_m, desc1_m);
+    t_m = ((double)cv::getTickCount() - t_m) / cv::getTickFrequency();
+
+    cv::Ptr<cv::SIFT> sift_o = cv::SIFT::create();
+    t_o = (double)cv::getTickCount();
+    sift_o->detectAndCompute(img1_gray, cv::noArray(), kpts1_o, desc1_o);
+    t_o = ((double)cv::getTickCount() - t_o) / cv::getTickFrequency();
+
+    std::cout << "MySift detect time: " << t_m << std::endl;
+    std::cout << "OpenCV SIFT detect time: " << t_o << std::endl;
 }

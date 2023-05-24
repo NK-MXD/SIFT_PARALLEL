@@ -11,6 +11,7 @@
 #include<iostream>//输入输出
 #include<vector>//vector
 #include<algorithm>
+#include <opencv2/core/utility.hpp>
 
 /******************根据输入图像大小计算高斯金字塔的组数****************************/
 /*image表示原始输入灰度图像,inline函数必须在声明处定义
