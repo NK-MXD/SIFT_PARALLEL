@@ -11,6 +11,8 @@
 #include<iostream>//输入输出
 #include<vector>//vector
 #include<algorithm>
+#include <omp.h>
+#include <xmmintrin.h>
 
 /******************根据输入图像大小计算高斯金字塔的组数****************************/
 /*image表示原始输入灰度图像,inline函数必须在声明处定义
@@ -415,37 +417,98 @@ void MySift::find_scale_space_extrema(const vector<vector<Mat>> &dog_pyr, const 
 			int num_col = curr_img.cols;//获得当前组图像的大小
 			size_t step = curr_img.step1();//一行元素所占宽度
 
-			for (int r = IMG_BORDER; r < num_row - IMG_BORDER; ++r)
-			{
-				const float *curr_ptr = curr_img.ptr<float>(r);
-				const float *prev_ptr = prev_img.ptr<float>(r);
-				const float *next_ptr = next_img.ptr<float>(r);
+			// openMP在这里进行并行化
+            #pragma omp parallel for
+            for (int r = IMG_BORDER; r < num_row - IMG_BORDER; ++r)
+            {
+                const float* curr_ptr = curr_img.ptr<float>(r);
+                const float* prev_ptr = prev_img.ptr<float>(r);
+                const float* next_ptr = next_img.ptr<float>(r);
 
-				for (int c = IMG_BORDER; c < num_col - IMG_BORDER; ++c)
-				{
-					float val = curr_ptr[c];//当前中心点响应值
+                for (int c = IMG_BORDER; c < num_col - IMG_BORDER; ++c)
+                {
+                    float val = curr_ptr[c];
+                    // SIMD求得所有元素的最大值, 然后进行计算
+                    // 第一层元素存放: 
+                    // 4X8 32个元素, 将32个元素存放到向量中进行比较(256)
+                    __m256 val_vec = _mm256_set_ps(val, val, val, val, val, val, val, val);
+                    __m256 elements1 = _mm256_set_ps(curr_ptr[c - 1], curr_ptr[c + 1], curr_ptr[c - step - 1], curr_ptr[c - step], 
+                                        curr_ptr[c - step + 1], curr_ptr[c + step - 1], curr_ptr[c + step], curr_ptr[c + step + 1]);
+                    __m256 elements2 = _mm256_set_ps(prev_ptr[c], prev_ptr[c - 1], prev_ptr[c - step + 1], prev_ptr[c - step - 1],
+                                        prev_ptr[c - step], prev_ptr[c - step + 1], prev_ptr[c + step - 1], prev_ptr[c + step]);
+                    __m256 elements3 = _mm256_set_ps(prev_ptr[c + step + 1], next_ptr[c], next_ptr[c - 1], next_ptr[c + 1],
+                                        next_ptr[c - step - 1], next_ptr[c - step], next_ptr[c - step + 1], next_ptr[c + step - 1]);
+                    __m256 elements4 = _mm256_set_ps(next_ptr[c + step], next_ptr[c + step + 1], threshold, threshold, threshold, threshold, threshold, threshold);
+                    __m256 elements5 = _mm256_set_ps(next_ptr[c + step], next_ptr[c + step + 1], -threshold, -threshold, -threshold, -threshold, -threshold, -threshold);
+                    // 然后进行两两比较
+                    __m256 max_values1 = _mm256_max_ps(elements1, elements2);
+                    __m256 max_values2 = _mm256_max_ps(elements3, elements4);
+                    __m256 max_values3 = _mm256_max_ps(max_values1, max_values2);
+                    __m256 max_result = _mm256_max_ps(val_vec, max_values3);
+                    __m256 min_values1 = _mm256_min_ps(elements1, elements2);
+                    __m256 min_values2 = _mm256_min_ps(elements3, elements5);
+                    __m256 min_values3 = _mm256_min_ps(min_values1, min_values2);
+                    __m256 min_result = _mm256_min_ps(val_vec, min_values3);
+                    // 比较最后的结果是否全部为val
+                    __m256 max_res = _mm256_cmp_ps(val_vec, max_result, _CMP_EQ_OQ);
+                    __m256 min_res = _mm256_cmp_ps(val_vec, min_result, _CMP_EQ_OQ);
+                    // 使用_mm256_movemask_ps将比较结果向量的符号位提取到一个整数中
+                    int max_mask = _mm256_movemask_ps(max_res);
+                    int min_mask = _mm256_movemask_ps(min_res);
+                    // 检查提取的掩码是否等于预期值（0xFF），以确定所有元素是否相等
+                    
+                    if(max_mask == 0xFF || min_mask == 0xFF){
 
-					//开始检测特征点
-					if (abs(val)>threshold &&
-						((val > 0 && val >= curr_ptr[c - 1] && val >= curr_ptr[c + 1] &&
-						val >= curr_ptr[c - step - 1] && val >= curr_ptr[c - step] && val >= curr_ptr[c - step + 1] &&
-						val >= curr_ptr[c + step - 1] && val >= curr_ptr[c + step] && val >= curr_ptr[c + step + 1] &&
-						val >= prev_ptr[c] && val >= prev_ptr[c - 1] && val >= prev_ptr[c + 1] &&
-						val >= prev_ptr[c - step - 1] && val >= prev_ptr[c - step] && val >= prev_ptr[c - step + 1] &&
-						val >= prev_ptr[c + step - 1] && val >= prev_ptr[c + step] && val >= prev_ptr[c + step + 1] &&
-						val >= next_ptr[c] && val >= next_ptr[c - 1] && val >= next_ptr[c + 1] &&
-						val >= next_ptr[c - step - 1] && val >= next_ptr[c - step] && val >= next_ptr[c - step + 1] &&
-						val >= next_ptr[c + step - 1] && val >= next_ptr[c + step] && val >= next_ptr[c + step + 1])  ||
-						(val < 0 && val <= curr_ptr[c - 1] && val <= curr_ptr[c + 1] &&
-						val <= curr_ptr[c - step - 1] && val <= curr_ptr[c - step] && val <= curr_ptr[c - step + 1] &&
-						val <= curr_ptr[c + step - 1] && val <= curr_ptr[c + step] && val <= curr_ptr[c + step + 1] &&
-						val <= prev_ptr[c] && val <= prev_ptr[c - 1] && val <= prev_ptr[c + 1] &&
-						val <= prev_ptr[c - step - 1] && val <= prev_ptr[c - step] && val <= prev_ptr[c - step + 1] &&
-						val <= prev_ptr[c + step - 1] && val <= prev_ptr[c + step] && val <= prev_ptr[c + step + 1] &&
-						val <= next_ptr[c] && val <= next_ptr[c - 1] && val <= next_ptr[c + 1] &&
-						val <= next_ptr[c - step - 1] && val <= next_ptr[c - step] && val <= next_ptr[c - step + 1] &&
-						val <= next_ptr[c + step - 1] && val <= next_ptr[c + step] && val <= next_ptr[c + step + 1])))
-					{
+                    // 512位向量扩展
+                    // 2X16个元素
+                    /*__m512 val_vec = _mm512_set_ps(val, val, val, val, val, val, val, val, val, val, val, val, val, val, val, val);
+                    __m512 elements1 = _mm512_set_ps(curr_ptr[c - 1], curr_ptr[c + 1], curr_ptr[c - step - 1], curr_ptr[c - step],
+                                            curr_ptr[c - step + 1], curr_ptr[c + step - 1], curr_ptr[c + step], curr_ptr[c + step + 1],
+                                            prev_ptr[c], prev_ptr[c - 1], prev_ptr[c - step + 1], prev_ptr[c - step - 1],
+                                            prev_ptr[c - step], prev_ptr[c - step + 1], prev_ptr[c + step - 1], prev_ptr[c + step]);
+                    __m512 elements2 = _mm512_set_ps(prev_ptr[c + step + 1], next_ptr[c], next_ptr[c - 1], next_ptr[c + 1],
+                                            next_ptr[c - step - 1], next_ptr[c - step], next_ptr[c - step + 1], next_ptr[c + step - 1],
+                                            next_ptr[c + step], next_ptr[c + step + 1], threshold, threshold, threshold, threshold, threshold, threshold);
+                    __m512 elements3 = _mm512_set_ps(prev_ptr[c + step + 1], next_ptr[c], next_ptr[c - 1], next_ptr[c + 1],
+                                            next_ptr[c - step - 1], next_ptr[c - step], next_ptr[c - step + 1], next_ptr[c + step - 1],
+                                            next_ptr[c + step], next_ptr[c + step + 1], -threshold, -threshold, -threshold, -threshold, -threshold, -threshold);
+                    __m512 max_values1 = _mm512_max_ps(elements1, elements2);
+                    __m512 max_result = _mm512_max_ps(val_vec, max_values1);
+
+                    __m512 min_values1 = _mm512_min_ps(elements1, elements3);
+                    __m512 min_result = _mm512_min_ps(val_vec, min_values1);
+
+                    __mmask16 max_res = _mm512_cmp_ps_mask(val_vec, max_result, _CMP_EQ_OQ);
+                    __mmask16 min_res = _mm512_cmp_ps_mask(val_vec, min_result, _CMP_EQ_OQ);
+
+                    //cout <<max_res<< " "<< min_res << "\n";
+                    if (max_res == 0xFFFF || min_res == 0xFFFF) {*/
+
+
+                    /*if (abs(val) > threshold &&
+                        ((val > 0 && val >= curr_ptr[c - 1] && val >= curr_ptr[c + 1] &&
+                            val >= curr_ptr[c - step - 1] && val >= curr_ptr[c - step] && val >= curr_ptr[c - step + 1] &&
+                            val >= curr_ptr[c + step - 1] && val >= curr_ptr[c + step] && val >= curr_ptr[c + step + 1] &&
+
+                            val >= prev_ptr[c] && val >= prev_ptr[c - 1] && val >= prev_ptr[c + 1] &&
+                            val >= prev_ptr[c - step - 1] && val >= prev_ptr[c - step] && val >= prev_ptr[c - step + 1] &&
+                            val >= prev_ptr[c + step - 1] && val >= prev_ptr[c + step] && val >= prev_ptr[c + step + 1] &&
+
+                            val >= next_ptr[c] && val >= next_ptr[c - 1] && val >= next_ptr[c + 1] &&
+                            val >= next_ptr[c - step - 1] && val >= next_ptr[c - step] && val >= next_ptr[c - step + 1] &&
+                            val >= next_ptr[c + step - 1] && val >= next_ptr[c + step] && val >= next_ptr[c + step + 1]) 
+                            ||
+                            (val < 0 && val <= curr_ptr[c - 1] && val <= curr_ptr[c + 1] &&
+                                val <= curr_ptr[c - step - 1] && val <= curr_ptr[c - step] && val <= curr_ptr[c - step + 1] &&
+                                val <= curr_ptr[c + step - 1] && val <= curr_ptr[c + step] && val <= curr_ptr[c + step + 1] &&
+
+                                val <= prev_ptr[c] && val <= prev_ptr[c - 1] && val <= prev_ptr[c + 1] &&
+                                val <= prev_ptr[c - step - 1] && val <= prev_ptr[c - step] && val <= prev_ptr[c - step + 1] &&
+                                val <= prev_ptr[c + step - 1] && val <= prev_ptr[c + step] && val <= prev_ptr[c + step + 1] &&
+
+                                val <= next_ptr[c] && val <= next_ptr[c - 1] && val <= next_ptr[c + 1] &&
+                                val <= next_ptr[c - step - 1] && val <= next_ptr[c - step] && val <= next_ptr[c - step + 1] &&
+                                val <= next_ptr[c + step - 1] && val <= next_ptr[c + step] && val <= next_ptr[c + step + 1]))){*/
 						//++numKeys;
 						//获得特征点初始行号，列号，组号，组内层号
 						int r1 = r, c1 = c, octave = i, layer = j;
