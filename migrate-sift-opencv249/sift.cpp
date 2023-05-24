@@ -234,15 +234,64 @@ static float clac_orientation_hist(const Mat &image, Point pt, float scale, int 
 	// fastAtan2(Y, X, Ori, len, true);//角度范围0-360度
 	// magnitude(X, Y, Mag, len);
 
-	for (int i = 0; i < len; ++i)
-	{
-		int bin = cvRound((n / 360.f)*Ori[i]);//bin的范围约束在[0,(n-1)]
-		if (bin >= n)
-			bin = bin - n;
-		if (bin < 0)
-			bin = bin + n;
-		temp_hist[bin] = temp_hist[bin] + Mag[i] * W[i];
-	}
+	// 这里进行SIMD向量化
+    int vecsize = 8;
+    __m256 n_div_360 = _mm256_set1_ps(n / 360.f);
+    __m256i n_vec = _mm256_set1_epi32(n);
+    __m256i zero_1_vec = _mm256_set1_epi32(-1);
+    __m256i n_1_vec = _mm256_set1_epi32(n - 1);
+
+    // 注意: 这里len
+    for (int i = 0; i < len; i += vecsize) {
+        // 将数据全部放入向量当中
+        __m256 Ori_vec = _mm256_loadu_ps(&Ori[i]);
+        __m256 Mag_vec = _mm256_loadu_ps(&Mag[i]);
+        __m256 W_vec = _mm256_loadu_ps(&W[i]);
+
+        // 计算bin的值
+        __m256 bin_vec = _mm256_mul_ps(Ori_vec, n_div_360);
+        // 类型转换为int
+        __m256i bin_int_vec = _mm256_cvtps_epi32(bin_vec);
+
+        // 判断是否 > n - 1
+        __m256i ge_n_mask = _mm256_cmpgt_epi32(bin_int_vec, n_1_vec);
+        // 位判断为1大于 n - 1 的就减去
+        bin_int_vec = _mm256_sub_epi32(bin_int_vec, _mm256_and_si256(ge_n_mask, n_vec));
+
+        // 判断是否 > -1
+        __m256i lt_n_mask = _mm256_cmpgt_epi32(bin_int_vec, zero_1_vec);
+        // 位判断为 <= -1 就加上 n
+        bin_int_vec = _mm256_add_epi32(bin_int_vec, _mm256_andnot_si256(lt_n_mask, n_vec));  // dst[255:0] := ((NOT a[255:0]) AND b[255:0])
+
+        __m256 hist_update = _mm256_mul_ps(Mag_vec, W_vec);
+        __m128i bin_int_vec_low = _mm256_extractf128_si256(bin_int_vec, 0);
+        __m128i bin_int_vec_high = _mm256_extractf128_si256(bin_int_vec, 1);
+        __m128 hist_update_low = _mm256_extractf128_ps(hist_update, 0);
+        __m128 hist_update_high = _mm256_extractf128_ps(hist_update, 1);
+
+        int temp_bins[8];
+        _mm_storeu_si128((__m128i*)temp_bins, bin_int_vec_low);
+        _mm_storeu_si128((__m128i*)(temp_bins + 4), bin_int_vec_high);
+
+        float temp_hist_updates[8];
+        _mm_storeu_ps(temp_hist_updates, hist_update_low);
+        _mm_storeu_ps(temp_hist_updates + 4, hist_update_high);
+        for (int j = 0; j < vecsize && i + j < len; ++j) {
+            int bin = temp_bins[j];
+            temp_hist[bin] += temp_hist_updates[j];
+        }
+    }
+
+	// 原来
+	// for (int i = 0; i < len; ++i)
+	// {
+	// 	int bin = cvRound((n / 360.f)*Ori[i]);//bin的范围约束在[0,(n-1)]
+	// 	if (bin >= n)
+	// 		bin = bin - n;
+	// 	if (bin < 0)
+	// 		bin = bin + n;
+	// 	temp_hist[bin] = temp_hist[bin] + Mag[i] * W[i];
+	// }
 	
 	//平滑直方图
 	temp_hist[-1] = temp_hist[n - 1];
@@ -257,12 +306,28 @@ static float clac_orientation_hist(const Mat &image, Point pt, float scale, int 
 	}
 
 	//获得直方图中最大值
-	float max_value = hist[0];
-	for (int i = 1; i < n; ++i)
-	{
-		if (hist[i]>max_value)
-			max_value = hist[i];
-	}
+	// SIMD并行化
+    int avx_iters = (n + 7) / 8 * 8;
+    __m256 max_value_avx = _mm256_set1_ps(hist[0]);
+    for (int i = 0; i < avx_iters; i += 8)
+    {
+        __m256 hist_avx = _mm256_loadu_ps(&hist[i]);
+        max_value_avx = _mm256_max_ps(max_value_avx, hist_avx);
+    }
+    float max_value_array[8];
+    _mm256_storeu_ps(max_value_array, max_value_avx);
+
+    float max_value = max_value_array[0];
+    for (int i = 1; i < 8; ++i)
+    {
+        max_value = std::max(max_value, max_value_array[i]);
+    }
+	// float max_value = hist[0];
+	// for (int i = 1; i < n; ++i)
+	// {
+	// 	if (hist[i]>max_value)
+	// 		max_value = hist[i];
+	// }
 	return max_value;
 }
 
