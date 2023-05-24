@@ -306,12 +306,28 @@ static float clac_orientation_hist(const Mat &image, Point pt, float scale, int 
 	}
 
 	//获得直方图中最大值
-	float max_value = hist[0];
-	for (int i = 1; i < n; ++i)
-	{
-		if (hist[i]>max_value)
-			max_value = hist[i];
-	}
+	// SIMD并行化
+    int avx_iters = (n + 7) / 8 * 8;
+    __m256 max_value_avx = _mm256_set1_ps(hist[0]);
+    for (int i = 0; i < avx_iters; i += 8)
+    {
+        __m256 hist_avx = _mm256_loadu_ps(&hist[i]);
+        max_value_avx = _mm256_max_ps(max_value_avx, hist_avx);
+    }
+    float max_value_array[8];
+    _mm256_storeu_ps(max_value_array, max_value_avx);
+
+    float max_value = max_value_array[0];
+    for (int i = 1; i < 8; ++i)
+    {
+        max_value = std::max(max_value, max_value_array[i]);
+    }
+	// float max_value = hist[0];
+	// for (int i = 1; i < n; ++i)
+	// {
+	// 	if (hist[i]>max_value)
+	// 		max_value = hist[i];
+	// }
 	return max_value;
 }
 
