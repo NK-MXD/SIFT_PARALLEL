@@ -10,9 +10,17 @@
 #include<stdlib.h>
 #include <filesystem>
 
+void test_fusion();
+void test_with_opencv_sift();
+
 int main(int argc,char *argv[])
 {
-	Mat image_1 = imread("/home/guo/mypro/CV/lab4-feature-extraction/ref/migrate-sift-opencv249/test_images/ucsb1.jpg", ImreadModes::IMREAD_UNCHANGED);
+//	test_fusion();
+    test_with_opencv_sift();
+}
+
+void test_fusion() {
+    Mat image_1 = imread("/home/guo/mypro/CV/lab4-feature-extraction/ref/migrate-sift-opencv249/test_images/ucsb1.jpg", ImreadModes::IMREAD_UNCHANGED);
 	Mat image_2 = imread("/home/guo/mypro/CV/lab4-feature-extraction/ref/migrate-sift-opencv249/test_images/ucsb2.jpg", ImreadModes::IMREAD_UNCHANGED);
 //	Mat image_1 = imread("/home/guo/mypro/CV/lab4-feature-extraction/feature/assets/Lenna.png", ImreadModes::IMREAD_UNCHANGED);
 //	Mat image_2 = imread("/home/guo/mypro/CV/lab4-feature-extraction/feature/assets/Lenna.png", ImreadModes::IMREAD_UNCHANGED);
@@ -125,5 +133,40 @@ int main(int argc,char *argv[])
 	//write_mosaic_pyramid(gauss_pyr_1, dog_pyr_1, gauss_pyr_2, dog_pyr_2, nOctaveLayers);
 
 	waitKey(0);
-	return 0;
+}
+
+void test_with_opencv_sift() {
+    MySift *sift_m;
+    cv::Ptr<cv::SIFT> sift_o;
+    cv::Mat img, img_gray;
+    std::vector<std::vector<cv::Mat>> gpyr, dogpyr;
+    std::vector<cv::KeyPoint> kpts_m, kpts_o;
+    cv::Mat desc_m, desc_o;
+    double t_detect_m, t_cal_m, t_detect_o, t_cal_o;
+
+    img = cv::imread("/home/guo/mypro/SIFT_PARALLEL/migrate-sift-opencv249/test_images/peacock.jpg");
+    cv::cvtColor(img, img_gray, cv::COLOR_BGR2GRAY);
+    sift_m = new MySift();
+    sift_o = cv::SIFT::create();
+
+    t_detect_m = (double)cv::getTickCount();
+    sift_m->detect(img_gray, gpyr, dogpyr, kpts_m);
+    t_detect_m = ((double)cv::getTickCount() - t_detect_m) / getTickFrequency();
+
+    t_cal_m = (double)cv::getTickCount();
+    sift_m->comput_des(gpyr, kpts_m, desc_m);
+    t_cal_m = ((double)cv::getTickCount() - t_cal_m) / getTickFrequency();
+
+    t_detect_o = (double)cv::getTickCount();
+    sift_o->detectAndCompute(img_gray, cv::noArray(), kpts_o, desc_o);
+    t_detect_o = ((double)cv::getTickCount() - t_detect_o) / getTickFrequency();
+
+    t_cal_o = (double)cv::getTickCount();
+    sift_o->compute(img_gray, kpts_o, desc_o);
+    t_cal_o = ((double)cv::getTickCount() - t_cal_o) / getTickFrequency();
+
+    std::cout << "MySift detect time: " << t_detect_m << " kpts size: " << kpts_m.size() << std::endl;
+    std::cout << "MySift compute time: " << t_cal_m << " desc size: " << desc_m.rows << std::endl;
+    std::cout << "OpenCV SIFT detect time: " << t_detect_o << " kpts size: " << kpts_o.size() << std::endl;
+    std::cout << "OpenCV SIFT compute time: " << t_cal_o << " desc size: " << desc_o.rows << std::endl;
 }

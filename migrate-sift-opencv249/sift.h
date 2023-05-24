@@ -99,4 +99,11 @@ private:
 
 };//注意类结束的分号
 
-#endif
+//#define TEST_AVX
+#ifdef TEST_AVX
+static double t_avx_512, t_avx_256, t_ori;
+static void test_simd_find_constr_extrema(const float *prev_ptr, const float *curr_ptr, const float *next_ptr, int c, size_t step, float threshold);
+
+#endif // TEST_AVX
+
+#endif // _SIFT_H_
