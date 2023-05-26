@@ -1,3 +1,0 @@
-/home/guo/mypro/SIFT_PARALLEL/migrate-sift-opencv249/cmake-build-release/CMakeFiles/sift_opencv249.dir
-/home/guo/mypro/SIFT_PARALLEL/migrate-sift-opencv249/cmake-build-release/CMakeFiles/edit_cache.dir
-/home/guo/mypro/SIFT_PARALLEL/migrate-sift-opencv249/cmake-build-release/CMakeFiles/rebuild_cache.dir
