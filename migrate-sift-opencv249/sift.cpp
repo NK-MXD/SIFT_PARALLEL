@@ -11,7 +11,8 @@
 #include<iostream>//输入输出
 #include<vector>//vector
 #include<algorithm>
-#include <opencv2/core/utility.hpp>
+#include <omp.h>
+#include <immintrin.h>
 
 /******************根据输入图像大小计算高斯金字塔的组数****************************/
 /*image表示原始输入灰度图像,inline函数必须在声明处定义
@@ -233,15 +234,64 @@ static float clac_orientation_hist(const Mat &image, Point pt, float scale, int 
 	// fastAtan2(Y, X, Ori, len, true);//角度范围0-360度
 	// magnitude(X, Y, Mag, len);
 
-	for (int i = 0; i < len; ++i)
-	{
-		int bin = cvRound((n / 360.f)*Ori[i]);//bin的范围约束在[0,(n-1)]
-		if (bin >= n)
-			bin = bin - n;
-		if (bin < 0)
-			bin = bin + n;
-		temp_hist[bin] = temp_hist[bin] + Mag[i] * W[i];
-	}
+	// 这里进行SIMD向量化
+    int vecsize = 8;
+    __m256 n_div_360 = _mm256_set1_ps(n / 360.f);
+    __m256i n_vec = _mm256_set1_epi32(n);
+    __m256i zero_1_vec = _mm256_set1_epi32(-1);
+    __m256i n_1_vec = _mm256_set1_epi32(n - 1);
+
+    // 注意: 这里len
+    for (int i = 0; i < len; i += vecsize) {
+        // 将数据全部放入向量当中
+        __m256 Ori_vec = _mm256_loadu_ps(&Ori[i]);
+        __m256 Mag_vec = _mm256_loadu_ps(&Mag[i]);
+        __m256 W_vec = _mm256_loadu_ps(&W[i]);
+
+        // 计算bin的值
+        __m256 bin_vec = _mm256_mul_ps(Ori_vec, n_div_360);
+        // 类型转换为int
+        __m256i bin_int_vec = _mm256_cvtps_epi32(bin_vec);
+
+        // 判断是否 > n - 1
+        __m256i ge_n_mask = _mm256_cmpgt_epi32(bin_int_vec, n_1_vec);
+        // 位判断为1大于 n - 1 的就减去
+        bin_int_vec = _mm256_sub_epi32(bin_int_vec, _mm256_and_si256(ge_n_mask, n_vec));
+
+        // 判断是否 > -1
+        __m256i lt_n_mask = _mm256_cmpgt_epi32(bin_int_vec, zero_1_vec);
+        // 位判断为 <= -1 就加上 n
+        bin_int_vec = _mm256_add_epi32(bin_int_vec, _mm256_andnot_si256(lt_n_mask, n_vec));  // dst[255:0] := ((NOT a[255:0]) AND b[255:0])
+
+        __m256 hist_update = _mm256_mul_ps(Mag_vec, W_vec);
+        __m128i bin_int_vec_low = _mm256_extractf128_si256(bin_int_vec, 0);
+        __m128i bin_int_vec_high = _mm256_extractf128_si256(bin_int_vec, 1);
+        __m128 hist_update_low = _mm256_extractf128_ps(hist_update, 0);
+        __m128 hist_update_high = _mm256_extractf128_ps(hist_update, 1);
+
+        int temp_bins[8];
+        _mm_storeu_si128((__m128i*)temp_bins, bin_int_vec_low);
+        _mm_storeu_si128((__m128i*)(temp_bins + 4), bin_int_vec_high);
+
+        float temp_hist_updates[8];
+        _mm_storeu_ps(temp_hist_updates, hist_update_low);
+        _mm_storeu_ps(temp_hist_updates + 4, hist_update_high);
+        for (int j = 0; j < vecsize && i + j < len; ++j) {
+            int bin = temp_bins[j];
+            temp_hist[bin] += temp_hist_updates[j];
+        }
+    }
+
+	// 原来
+	// for (int i = 0; i < len; ++i)
+	// {
+	// 	int bin = cvRound((n / 360.f)*Ori[i]);//bin的范围约束在[0,(n-1)]
+	// 	if (bin >= n)
+	// 		bin = bin - n;
+	// 	if (bin < 0)
+	// 		bin = bin + n;
+	// 	temp_hist[bin] = temp_hist[bin] + Mag[i] * W[i];
+	// }
 	
 	//平滑直方图
 	temp_hist[-1] = temp_hist[n - 1];
@@ -256,12 +306,28 @@ static float clac_orientation_hist(const Mat &image, Point pt, float scale, int 
 	}
 
 	//获得直方图中最大值
-	float max_value = hist[0];
-	for (int i = 1; i < n; ++i)
-	{
-		if (hist[i]>max_value)
-			max_value = hist[i];
-	}
+	// SIMD并行化
+    int avx_iters = (n + 7) / 8 * 8;
+    __m256 max_value_avx = _mm256_set1_ps(hist[0]);
+    for (int i = 0; i < avx_iters; i += 8)
+    {
+        __m256 hist_avx = _mm256_loadu_ps(&hist[i]);
+        max_value_avx = _mm256_max_ps(max_value_avx, hist_avx);
+    }
+    float max_value_array[8];
+    _mm256_storeu_ps(max_value_array, max_value_avx);
+
+    float max_value = max_value_array[0];
+    for (int i = 1; i < 8; ++i)
+    {
+        max_value = std::max(max_value, max_value_array[i]);
+    }
+	// float max_value = hist[0];
+	// for (int i = 1; i < n; ++i)
+	// {
+	// 	if (hist[i]>max_value)
+	// 		max_value = hist[i];
+	// }
 	return max_value;
 }
 
@@ -358,7 +424,7 @@ static bool adjust_local_extrema(const vector<vector<Mat>> &dog_pyr, KeyPoint &k
 
 		float contr = img.at<float>(row, col) + t*0.5f;//特征点响应
 		//Low建议contr阈值是0.03，但是RobHess等建议阈值为0.04/nOctaveLayers
-		if (abs(contr) < contrastThreshold / nOctaveLayers)
+		if (abs(contr) < contrastThreshold / (float)nOctaveLayers)
 			return false;
 
 
@@ -375,11 +441,11 @@ static bool adjust_local_extrema(const vector<vector<Mat>> &dog_pyr, KeyPoint &k
 			return false;
 
 		/*********到目前为止该特征的满足上面所有要求，保存该特征点信息***********/
-		kpt.pt.x = ((float)col + xc)*(1<<octave);//相对于最底层的图像的x坐标
-		kpt.pt.y = ((float)row + xr)*(1<<octave);//相对于最底层图像的y坐标
+		kpt.pt.x = ((float)col + xc) * (float)(1 << octave);//相对于最底层的图像的x坐标
+		kpt.pt.y = ((float)row + xr) * (float)(1 << octave);//相对于最底层图像的y坐标
 		kpt.octave = octave + (layer << 8);//组号保存在低字节，层号保存在高字节
 		//相对于最底层图像的尺度
-		kpt.size = sigma*powf(2.f, (layer + xi) / nOctaveLayers)*(1<<octave);
+		kpt.size = sigma*powf(2.f, ((float)layer + xi) / (float)nOctaveLayers) * (float)(1 << octave);
 		kpt.response = abs(contr);//特征点响应值
 
 		return true;
@@ -395,6 +461,8 @@ static bool adjust_local_extrema(const vector<vector<Mat>> &dog_pyr, KeyPoint &k
 void MySift::find_scale_space_extrema(const vector<vector<Mat>> &dog_pyr, const vector<vector<Mat>> &gauss_pyr,
 	vector<KeyPoint> &keypoints) const
 {
+    keypoints.clear();//先清空keypoints
+
 	int nOctaves = (int)dog_pyr.size();
 	//Low文章建议threshold是0.03，Rob Hess等人使用0.04/nOctaveLayers作为阈值
 	float threshold = (float)(contrastThreshold / nOctaveLayers);
@@ -402,8 +470,9 @@ void MySift::find_scale_space_extrema(const vector<vector<Mat>> &dog_pyr, const 
 	float hist[n];
 	KeyPoint kpt;
 
-	keypoints.clear();//先清空keypoints
-	//int numKeys = 0;
+#ifdef TEST_AVX
+    t_avx_512 = t_avx_256 = t_ori = 0.0;
+#endif // TEST_AVX
 
 	for (int i = 0; i < nOctaves; ++i)//对于每一组
 	{
@@ -416,37 +485,101 @@ void MySift::find_scale_space_extrema(const vector<vector<Mat>> &dog_pyr, const 
 			int num_col = curr_img.cols;//获得当前组图像的大小
 			size_t step = curr_img.step1();//一行元素所占宽度
 
-			for (int r = IMG_BORDER; r < num_row - IMG_BORDER; ++r)
-			{
-				const float *curr_ptr = curr_img.ptr<float>(r);
-				const float *prev_ptr = prev_img.ptr<float>(r);
-				const float *next_ptr = next_img.ptr<float>(r);
+			// openMP在这里进行并行化
+            #pragma omp parallel for
+            for (int r = IMG_BORDER; r < num_row - IMG_BORDER; ++r)
+            {
+                const float* curr_ptr = curr_img.ptr<float>(r);
+                const float* prev_ptr = prev_img.ptr<float>(r);
+                const float* next_ptr = next_img.ptr<float>(r);
 
-				for (int c = IMG_BORDER; c < num_col - IMG_BORDER; ++c)
-				{
-					float val = curr_ptr[c];//当前中心点响应值
+                for (int c = IMG_BORDER; c < num_col - IMG_BORDER; ++c)
+                {
+#ifdef TEST_AVX
+                    test_simd_find_constr_extrema(prev_ptr, curr_ptr, next_ptr, c, step, threshold);
+#endif // TEST_AVX
+                    float val = curr_ptr[c];
+                    // SIMD求得所有元素的最大值, 然后进行计算
+                    // 第一层元素存放: 
+                    // 4X8 32个元素, 将32个元素存放到向量中进行比较(256)
+                    /*__m256 val_vec = _mm256_set_ps(val, val, val, val, val, val, val, val);
+                    __m256 elements1 = _mm256_set_ps(curr_ptr[c - 1], curr_ptr[c + 1], curr_ptr[c - step - 1], curr_ptr[c - step], 
+                                        curr_ptr[c - step + 1], curr_ptr[c + step - 1], curr_ptr[c + step], curr_ptr[c + step + 1]);
+                    __m256 elements2 = _mm256_set_ps(prev_ptr[c], prev_ptr[c - 1], prev_ptr[c - step + 1], prev_ptr[c - step - 1],
+                                        prev_ptr[c - step], prev_ptr[c - step + 1], prev_ptr[c + step - 1], prev_ptr[c + step]);
+                    __m256 elements3 = _mm256_set_ps(prev_ptr[c + step + 1], next_ptr[c], next_ptr[c - 1], next_ptr[c + 1],
+                                        next_ptr[c - step - 1], next_ptr[c - step], next_ptr[c - step + 1], next_ptr[c + step - 1]);
+                    __m256 elements4 = _mm256_set_ps(next_ptr[c + step], next_ptr[c + step + 1], threshold, threshold, threshold, threshold, threshold, threshold);
+                    __m256 elements5 = _mm256_set_ps(next_ptr[c + step], next_ptr[c + step + 1], -threshold, -threshold, -threshold, -threshold, -threshold, -threshold);
+                    // 然后进行两两比较
+                    __m256 max_values1 = _mm256_max_ps(elements1, elements2);
+                    __m256 max_values2 = _mm256_max_ps(elements3, elements4);
+                    __m256 max_values3 = _mm256_max_ps(max_values1, max_values2);
+                    __m256 max_result = _mm256_max_ps(val_vec, max_values3);
+                    __m256 min_values1 = _mm256_min_ps(elements1, elements2);
+                    __m256 min_values2 = _mm256_min_ps(elements3, elements5);
+                    __m256 min_values3 = _mm256_min_ps(min_values1, min_values2);
+                    __m256 min_result = _mm256_min_ps(val_vec, min_values3);
+                    // 比较最后的结果是否全部为val
+                    __m256 max_res = _mm256_cmp_ps(val_vec, max_result, _CMP_EQ_OQ);
+                    __m256 min_res = _mm256_cmp_ps(val_vec, min_result, _CMP_EQ_OQ);
+                    // 使用_mm256_movemask_ps将比较结果向量的符号位提取到一个整数中
+                    int max_mask = _mm256_movemask_ps(max_res);
+                    int min_mask = _mm256_movemask_ps(min_res);
+                    // 检查提取的掩码是否等于预期值（0xFF），以确定所有元素是否相等
 
-					//开始检测特征点
-					if (abs(val)>threshold &&
-						((val > 0 && val >= curr_ptr[c - 1] && val >= curr_ptr[c + 1] &&
-						val >= curr_ptr[c - step - 1] && val >= curr_ptr[c - step] && val >= curr_ptr[c - step + 1] &&
-						val >= curr_ptr[c + step - 1] && val >= curr_ptr[c + step] && val >= curr_ptr[c + step + 1] &&
-						val >= prev_ptr[c] && val >= prev_ptr[c - 1] && val >= prev_ptr[c + 1] &&
-						val >= prev_ptr[c - step - 1] && val >= prev_ptr[c - step] && val >= prev_ptr[c - step + 1] &&
-						val >= prev_ptr[c + step - 1] && val >= prev_ptr[c + step] && val >= prev_ptr[c + step + 1] &&
-						val >= next_ptr[c] && val >= next_ptr[c - 1] && val >= next_ptr[c + 1] &&
-						val >= next_ptr[c - step - 1] && val >= next_ptr[c - step] && val >= next_ptr[c - step + 1] &&
-						val >= next_ptr[c + step - 1] && val >= next_ptr[c + step] && val >= next_ptr[c + step + 1])  ||
-						(val < 0 && val <= curr_ptr[c - 1] && val <= curr_ptr[c + 1] &&
-						val <= curr_ptr[c - step - 1] && val <= curr_ptr[c - step] && val <= curr_ptr[c - step + 1] &&
-						val <= curr_ptr[c + step - 1] && val <= curr_ptr[c + step] && val <= curr_ptr[c + step + 1] &&
-						val <= prev_ptr[c] && val <= prev_ptr[c - 1] && val <= prev_ptr[c + 1] &&
-						val <= prev_ptr[c - step - 1] && val <= prev_ptr[c - step] && val <= prev_ptr[c - step + 1] &&
-						val <= prev_ptr[c + step - 1] && val <= prev_ptr[c + step] && val <= prev_ptr[c + step + 1] &&
-						val <= next_ptr[c] && val <= next_ptr[c - 1] && val <= next_ptr[c + 1] &&
-						val <= next_ptr[c - step - 1] && val <= next_ptr[c - step] && val <= next_ptr[c - step + 1] &&
-						val <= next_ptr[c + step - 1] && val <= next_ptr[c + step] && val <= next_ptr[c + step + 1])))
-					{
+                    if(max_mask == 0xFF || min_mask == 0xFF){*/
+
+                    // 512位向量扩展
+                    // 2X16个元素
+                    /*__m512 val_vec = _mm512_set_ps(val, val, val, val, val, val, val, val, val, val, val, val, val, val, val, val);
+                    __m512 elements1 = _mm512_set_ps(curr_ptr[c - 1], curr_ptr[c + 1], curr_ptr[c - step - 1], curr_ptr[c - step],
+                                            curr_ptr[c - step + 1], curr_ptr[c + step - 1], curr_ptr[c + step], curr_ptr[c + step + 1],
+                                            prev_ptr[c], prev_ptr[c - 1], prev_ptr[c - step + 1], prev_ptr[c - step - 1],
+                                            prev_ptr[c - step], prev_ptr[c - step + 1], prev_ptr[c + step - 1], prev_ptr[c + step]);
+                    __m512 elements2 = _mm512_set_ps(prev_ptr[c + step + 1], next_ptr[c], next_ptr[c - 1], next_ptr[c + 1],
+                                            next_ptr[c - step - 1], next_ptr[c - step], next_ptr[c - step + 1], next_ptr[c + step - 1],
+                                            next_ptr[c + step], next_ptr[c + step + 1], threshold, threshold, threshold, threshold, threshold, threshold);
+                    __m512 elements3 = _mm512_set_ps(prev_ptr[c + step + 1], next_ptr[c], next_ptr[c - 1], next_ptr[c + 1],
+                                            next_ptr[c - step - 1], next_ptr[c - step], next_ptr[c - step + 1], next_ptr[c + step - 1],
+                                            next_ptr[c + step], next_ptr[c + step + 1], -threshold, -threshold, -threshold, -threshold, -threshold, -threshold);
+                    __m512 max_values1 = _mm512_max_ps(elements1, elements2);
+                    __m512 max_result = _mm512_max_ps(val_vec, max_values1);
+
+                    __m512 min_values1 = _mm512_min_ps(elements1, elements3);
+                    __m512 min_result = _mm512_min_ps(val_vec, min_values1);
+
+                    __mmask16 max_res = _mm512_cmp_ps_mask(val_vec, max_result, _CMP_EQ_OQ);
+                    __mmask16 min_res = _mm512_cmp_ps_mask(val_vec, min_result, _CMP_EQ_OQ);
+
+                    //cout <<max_res<< " "<< min_res << "\n";
+                    if (max_res == 0xFFFF || min_res == 0xFFFF) {*/
+
+
+                    if (abs(val) > threshold &&
+                        ((val > 0 && val >= curr_ptr[c - 1] && val >= curr_ptr[c + 1] &&
+                            val >= curr_ptr[c - step - 1] && val >= curr_ptr[c - step] && val >= curr_ptr[c - step + 1] &&
+                            val >= curr_ptr[c + step - 1] && val >= curr_ptr[c + step] && val >= curr_ptr[c + step + 1] &&
+
+                            val >= prev_ptr[c] && val >= prev_ptr[c - 1] && val >= prev_ptr[c + 1] &&
+                            val >= prev_ptr[c - step - 1] && val >= prev_ptr[c - step] && val >= prev_ptr[c - step + 1] &&
+                            val >= prev_ptr[c + step - 1] && val >= prev_ptr[c + step] && val >= prev_ptr[c + step + 1] &&
+
+                            val >= next_ptr[c] && val >= next_ptr[c - 1] && val >= next_ptr[c + 1] &&
+                            val >= next_ptr[c - step - 1] && val >= next_ptr[c - step] && val >= next_ptr[c - step + 1] &&
+                            val >= next_ptr[c + step - 1] && val >= next_ptr[c + step] && val >= next_ptr[c + step + 1]) 
+                            ||
+                            (val < 0 && val <= curr_ptr[c - 1] && val <= curr_ptr[c + 1] &&
+                                val <= curr_ptr[c - step - 1] && val <= curr_ptr[c - step] && val <= curr_ptr[c - step + 1] &&
+                                val <= curr_ptr[c + step - 1] && val <= curr_ptr[c + step] && val <= curr_ptr[c + step + 1] &&
+
+                                val <= prev_ptr[c] && val <= prev_ptr[c - 1] && val <= prev_ptr[c + 1] &&
+                                val <= prev_ptr[c - step - 1] && val <= prev_ptr[c - step] && val <= prev_ptr[c - step + 1] &&
+                                val <= prev_ptr[c + step - 1] && val <= prev_ptr[c + step] && val <= prev_ptr[c + step + 1] &&
+
+                                val <= next_ptr[c] && val <= next_ptr[c - 1] && val <= next_ptr[c + 1] &&
+                                val <= next_ptr[c - step - 1] && val <= next_ptr[c - step] && val <= next_ptr[c - step + 1] &&
+                                val <= next_ptr[c + step - 1] && val <= next_ptr[c + step] && val <= next_ptr[c + step + 1]))){
 						//++numKeys;
 						//获得特征点初始行号，列号，组号，组内层号
 						int r1 = r, c1 = c, octave = i, layer = j;
@@ -458,7 +591,7 @@ void MySift::find_scale_space_extrema(const vector<vector<Mat>> &dog_pyr, const 
 						}
 
 						float scale = kpt.size / float (1 << octave);//该特征点相对于本组的尺度
-						float max_hist = clac_orientation_hist(gauss_pyr[octave][layer], 
+						float max_hist = clac_orientation_hist(gauss_pyr[octave][layer],
 							Point(c1, r1), scale, n, hist);
 						float mag_thr = max_hist*ORI_PEAK_RATIO;
 
@@ -485,9 +618,7 @@ void MySift::find_scale_space_extrema(const vector<vector<Mat>> &dog_pyr, const 
 
 								kpt.angle = (360.f / n)*bin;//特征点的主方向0-360度
 								keypoints.push_back(kpt);//保存该特征点
-								
 							}
-
 						}
 					}
 				}
@@ -495,7 +626,11 @@ void MySift::find_scale_space_extrema(const vector<vector<Mat>> &dog_pyr, const 
 		}
 	}
 
-	//cout << "初始满足要求特征点个数是: " << numKeys << endl;
+#ifdef TEST_AVX
+    std::cout << "avx_256_time: " << t_avx_256 << std::endl
+              << "avx_512_time: " << t_avx_512 << std::endl
+              << "origin  time: " << t_ori << std::endl;
+#endif
 }
 
 
@@ -685,37 +820,81 @@ static void calc_sift_descriptor(const Mat &gauss_image, float main_angle, Point
 /*gauss_pyr表示高斯金字塔
  keypoints表示特征点、
  descriptors表示生成的特征点的描述子*/
-void MySift::calc_descriptors(const vector<vector<Mat>> &gauss_pyr, vector<KeyPoint> &keypoints,
-	Mat &descriptors) const
+void MySift::calc_descriptors(const vector<vector<Mat>> &gauss_pyr, const vector<KeyPoint> &keypoints, Mat &descriptors) const
 {
 	int d = DESCR_WIDTH;//d=4,特征点邻域网格个数是d x d
 	int n = DESCR_HIST_BINS;//n=8,每个网格特征点梯度角度等分为8个方向
-	descriptors.create(keypoints.size(), d*d*n, CV_32FC1);//分配空间
+    int kpts_num = (int)keypoints.size();
+	descriptors.create(kpts_num, d*d*n, CV_32FC1);//分配空间
 
-	for (size_t i = 0; i < keypoints.size(); ++i)//对于每一个特征点
+    std::vector<KeyPoint> kpts;
+    if (double_size) {  // keypoints中的特征点位置是相对于原图片而言的，因此这里需要将特征点的位置扩大2倍
+        kpts.resize(kpts_num);
+        for (size_t i = 0; i < kpts_num; ++i) {
+            kpts[i].pt = keypoints[i].pt * 2.f;
+            kpts[i].octave = keypoints[i].octave;
+            kpts[i].size = keypoints[i].size * 2.f;
+            kpts[i].angle = keypoints[i].angle;
+        }
+    } else {
+        kpts = keypoints;   // shallow copy
+    }
+
+	for (size_t i = 0; i < kpts_num; ++i)//对于每一个特征点
 	{
 		int octaves, layer;
 		//得到特征点所在的组号，层号
-		octaves = keypoints[i].octave & 255;
-		layer = (keypoints[i].octave >> 8) & 255;
+		octaves = kpts[i].octave & 255;
+		layer = (kpts[i].octave >> 8) & 255;
 
 		//得到特征点相对于本组的坐标，不是最底层
-		Point2f pt(keypoints[i].pt.x/(1<<octaves), keypoints[i].pt.y/(1<<octaves));
-		float scale = keypoints[i].size / (1 << octaves);//得到特征点相对于本组的尺度
-		float main_angle = keypoints[i].angle;//特征点主方向
+		Point2f pt(kpts[i].pt.x / (float)(1 << octaves), kpts[i].pt.y / (float)(1 << octaves));
+		float scale = kpts[i].size / (float)(1 << octaves);//得到特征点相对于本组的尺度
+		float main_angle = kpts[i].angle;//特征点主方向
 
-		//计算改点的描述子
-		calc_sift_descriptor(gauss_pyr[octaves][layer],
-			main_angle, pt, scale,
-			d, n, descriptors.ptr<float>((int)i));
-
-		if (double_size)//如果图像尺寸扩大一倍
-		{
-			keypoints[i].pt.x = keypoints[i].pt.x / 2.f;
-			keypoints[i].pt.y = keypoints[i].pt.y / 2.f;
-		}
+		//计算该点的描述子
+		calc_sift_descriptor(gauss_pyr[octaves][layer], main_angle, pt, scale, d, n, descriptors.ptr<float>((int)i));
 	}
-		
+}
+
+/* 在计算每个关键点对应特征子部分进行parallel_for并行化 */
+void MySift::calc_descriptors_opencv_parallel_for(const vector<vector<Mat>> &gauss_pyr, const vector<KeyPoint> &keypoints, Mat &descriptors) const
+{
+	int d = DESCR_WIDTH;//d=4,特征点邻域网格个数是d x d
+	int n = DESCR_HIST_BINS;//n=8,每个网格特征点梯度角度等分为8个方向
+    int kpts_num = (int)keypoints.size();
+	descriptors.create(kpts_num, d*d*n, CV_32FC1);//分配空间
+
+    std::vector<KeyPoint> kpts;
+    if (double_size) {  // keypoints中的特征点位置是相对于原图片而言的，因此这里需要将特征点的位置扩大2倍
+        kpts.resize(kpts_num);
+        for (size_t i = 0; i < kpts_num; ++i) {
+            kpts[i].pt = keypoints[i].pt * 2.f;
+            kpts[i].octave = keypoints[i].octave;
+            kpts[i].size = keypoints[i].size * 2.f;
+            kpts[i].angle = keypoints[i].angle;
+        }
+    } else {
+        kpts = keypoints;   // shallow copy
+    }
+
+    cv::parallel_for_(cv::Range(0, kpts_num), [&](const cv::Range &range){
+        for (int i = range.start; i < range.end; ++i)//对于每一个特征点
+        {
+            int octaves, layer;
+            //得到特征点所在的组号，层号
+            octaves = kpts[i].octave & 255;
+            layer = (kpts[i].octave >> 8) & 255;
+
+            //得到特征点相对于本组的坐标，不是最底层
+            Point2f pt(kpts[i].pt.x / (float)(1 << octaves), kpts[i].pt.y / (float)(1 << octaves));
+            float scale = kpts[i].size / (float)(1 << octaves);//得到特征点相对于本组的尺度
+            float main_angle = kpts[i].angle;//特征点主方向
+
+            //计算该点的描述子
+            calc_sift_descriptor(gauss_pyr[octaves][layer], main_angle, pt, scale, d, n, descriptors.ptr<float>((int)i));
+        }
+    });
 }
 
 /******************************特征点检测*********************************/
@@ -760,7 +939,10 @@ void MySift::detect(const Mat &image, vector<vector<Mat>> &gauss_pyr, vector<vec
 		keypoints.erase(keypoints.begin()+nfeatures,keypoints.end());
 	}
 
-
+    // 重新调整特征点的坐标，若初始图像经过上采样，则特征点坐标是相对于上采样图像的，因此调整回相对于原图像
+    for (auto &kpt : keypoints) {
+        kpt.pt /= 2.f;
+    }
 }
 
 /**********************特征点描述*******************/
@@ -771,3 +953,131 @@ void MySift::comput_des(const vector<vector<Mat>> &gauss_pyr, vector<KeyPoint> &
 {
 	calc_descriptors(gauss_pyr, keypoints, descriptors);
 }
+
+#ifdef TEST_AVX
+static void
+test_simd_find_constr_extrema(const float *prev_ptr, const float *curr_ptr, const float *next_ptr, int c, size_t step, float threshold) {
+    double t_avx_512_local, t_avx_256_local, t_ori_local;
+    bool flag_avx_512, flag_avx_256, flag_ori;
+    float val = curr_ptr[c];
+    // SIMD求得所有元素的最大值, 然后进行计算
+    // 第一层元素存放:
+    // 4X8 32个元素, 将32个元素存放到向量中进行比较(256)
+    t_avx_256_local = (double) getTickCount();
+    {
+        __m256 val_vec = _mm256_set_ps(val, val, val, val, val, val, val, val);
+        __m256 elements1 = _mm256_set_ps(curr_ptr[c - 1], curr_ptr[c + 1], curr_ptr[c - step - 1], curr_ptr[c - step],
+                                         curr_ptr[c - step + 1], curr_ptr[c + step - 1], curr_ptr[c + step],
+                                         curr_ptr[c + step + 1]);
+        __m256 elements2 = _mm256_set_ps(prev_ptr[c], prev_ptr[c - 1], prev_ptr[c - step + 1], prev_ptr[c - step - 1],
+                                         prev_ptr[c - step], prev_ptr[c - step + 1], prev_ptr[c + step - 1],
+                                         prev_ptr[c + step]);
+        __m256 elements3 = _mm256_set_ps(prev_ptr[c + step + 1], next_ptr[c], next_ptr[c - 1], next_ptr[c + 1],
+                                         next_ptr[c - step - 1], next_ptr[c - step], next_ptr[c - step + 1],
+                                         next_ptr[c + step - 1]);
+        __m256 elements4 = _mm256_set_ps(next_ptr[c + step], next_ptr[c + step + 1], threshold, threshold, threshold,
+                                         threshold, threshold, threshold);
+        __m256 elements5 = _mm256_set_ps(next_ptr[c + step], next_ptr[c + step + 1], -threshold, -threshold, -threshold,
+                                         -threshold, -threshold, -threshold);
+        // 然后进行两两比较
+        __m256 max_values1 = _mm256_max_ps(elements1, elements2);
+        __m256 max_values2 = _mm256_max_ps(elements3, elements4);
+        __m256 max_values3 = _mm256_max_ps(max_values1, max_values2);
+        __m256 max_result = _mm256_max_ps(val_vec, max_values3);
+        __m256 min_values1 = _mm256_min_ps(elements1, elements2);
+        __m256 min_values2 = _mm256_min_ps(elements3, elements5);
+        __m256 min_values3 = _mm256_min_ps(min_values1, min_values2);
+        __m256 min_result = _mm256_min_ps(val_vec, min_values3);
+        // 比较最后的结果是否全部为val
+        __m256 max_res = _mm256_cmp_ps(val_vec, max_result, _CMP_EQ_OQ);
+        __m256 min_res = _mm256_cmp_ps(val_vec, min_result, _CMP_EQ_OQ);
+        // 使用_mm256_movemask_ps将比较结果向量的符号位提取到一个整数中
+        int max_mask = _mm256_movemask_ps(max_res);
+        int min_mask = _mm256_movemask_ps(min_res);
+        // 检查提取的掩码是否等于预期值（0xFF），以确定所有元素是否相等
+        flag_avx_256 = (max_mask == 0xFF || min_mask == 0xFF);
+    }
+    t_avx_256_local = ((double) getTickCount() - t_avx_256_local) / getTickFrequency();
+
+    t_avx_512_local = (double) getTickCount();
+    {// 512位向量扩展    // note: add `-mavxf512` to `CXX_FLAGS`, but causes seg-fault
+        // 2X16个元素
+//        __m512 val_vec = _mm512_set_ps(val, val, val, val, val, val, val, val, val, val, val, val, val, val, val, val);
+//        __m512 elements1 = _mm512_set_ps(curr_ptr[c - 1], curr_ptr[c + 1], curr_ptr[c - step - 1], curr_ptr[c - step],
+//                                         curr_ptr[c - step + 1], curr_ptr[c + step - 1], curr_ptr[c + step],
+//                                         curr_ptr[c + step + 1],
+//                                         prev_ptr[c], prev_ptr[c - 1], prev_ptr[c - step + 1], prev_ptr[c - step - 1],
+//                                         prev_ptr[c - step], prev_ptr[c - step + 1], prev_ptr[c + step - 1],
+//                                         prev_ptr[c + step]);
+//        __m512 elements2 = _mm512_set_ps(prev_ptr[c + step + 1], next_ptr[c], next_ptr[c - 1], next_ptr[c + 1],
+//                                         next_ptr[c - step - 1], next_ptr[c - step], next_ptr[c - step + 1],
+//                                         next_ptr[c + step - 1],
+//                                         next_ptr[c + step], next_ptr[c + step + 1], threshold, threshold, threshold,
+//                                         threshold, threshold, threshold);
+//        __m512 elements3 = _mm512_set_ps(prev_ptr[c + step + 1], next_ptr[c], next_ptr[c - 1], next_ptr[c + 1],
+//                                         next_ptr[c - step - 1], next_ptr[c - step], next_ptr[c - step + 1],
+//                                         next_ptr[c + step - 1],
+//                                         next_ptr[c + step], next_ptr[c + step + 1], -threshold, -threshold, -threshold,
+//                                         -threshold, -threshold, -threshold);
+//        __m512 max_values1 = _mm512_max_ps(elements1, elements2);
+//        __m512 max_result = _mm512_max_ps(val_vec, max_values1);
+//
+//        __m512 min_values1 = _mm512_min_ps(elements1, elements3);
+//        __m512 min_result = _mm512_min_ps(val_vec, min_values1);
+//
+//        __mmask16 max_res = _mm512_cmp_ps_mask(val_vec, max_result, 0x00);
+//        __mmask16 min_res = _mm512_cmp_ps_mask(val_vec, min_result, 0x00);
+//
+//        bool flag_avx_512 = (max_res == 0xFFFF || min_res == 0xFFFF);
+    }
+    t_avx_512_local = ((double) getTickCount() - t_avx_512_local) / getTickFrequency();
+
+    t_ori_local = (double) getTickCount();
+    bool flag_origin =
+            (abs(val) > threshold && ((val > 0 && val >= curr_ptr[c - 1] && val >= curr_ptr[c + 1] &&
+                                       val >= curr_ptr[c - step - 1] && val >= curr_ptr[c - step] &&
+                                       val >= curr_ptr[c - step + 1] &&
+                                       val >= curr_ptr[c + step - 1] && val >= curr_ptr[c + step] &&
+                                       val >= curr_ptr[c + step + 1] &&
+
+                                       val >= prev_ptr[c] && val >= prev_ptr[c - 1] && val >= prev_ptr[c + 1] &&
+                                       val >= prev_ptr[c - step - 1] && val >= prev_ptr[c - step] &&
+                                       val >= prev_ptr[c - step + 1] &&
+                                       val >= prev_ptr[c + step - 1] && val >= prev_ptr[c + step] &&
+                                       val >= prev_ptr[c + step + 1] &&
+
+                                       val >= next_ptr[c] && val >= next_ptr[c - 1] && val >= next_ptr[c + 1] &&
+                                       val >= next_ptr[c - step - 1] && val >= next_ptr[c - step] &&
+                                       val >= next_ptr[c - step + 1] &&
+                                       val >= next_ptr[c + step - 1] && val >= next_ptr[c + step] &&
+                                       val >= next_ptr[c + step + 1])
+                                      ||
+                                      (val < 0 && val <= curr_ptr[c - 1] && val <= curr_ptr[c + 1] &&
+                                       val <= curr_ptr[c - step - 1] && val <= curr_ptr[c - step] &&
+                                       val <= curr_ptr[c - step + 1] &&
+                                       val <= curr_ptr[c + step - 1] && val <= curr_ptr[c + step] &&
+                                       val <= curr_ptr[c + step + 1] &&
+
+                                       val <= prev_ptr[c] && val <= prev_ptr[c - 1] && val <= prev_ptr[c + 1] &&
+                                       val <= prev_ptr[c - step - 1] && val <= prev_ptr[c - step] &&
+                                       val <= prev_ptr[c - step + 1] &&
+                                       val <= prev_ptr[c + step - 1] && val <= prev_ptr[c + step] &&
+                                       val <= prev_ptr[c + step + 1] &&
+
+                                       val <= next_ptr[c] && val <= next_ptr[c - 1] && val <= next_ptr[c + 1] &&
+                                       val <= next_ptr[c - step - 1] && val <= next_ptr[c - step] &&
+                                       val <= next_ptr[c - step + 1] &&
+                                       val <= next_ptr[c + step - 1] && val <= next_ptr[c + step] &&
+                                       val <= next_ptr[c + step + 1])));
+    t_ori_local = ((double) getTickCount() - t_ori_local) / getTickFrequency();
+
+//    if (flag_avx_256 != flag_origin) {
+//        std::cout << "wrong result. avx_256: " << flag_avx_256 << " origin " << flag_origin << std::endl;
+//    } else {
+//        std::cout << "right result" << std::endl;
+//    }
+    t_avx_512 = t_avx_512 + t_avx_512_local;
+    t_avx_256 = t_avx_256 + t_avx_256_local;
+    t_ori = t_ori + t_ori_local;
+}
+#endif // TEST_AVX

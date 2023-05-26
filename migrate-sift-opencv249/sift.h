@@ -78,7 +78,9 @@ public:
 		vector<KeyPoint> &keypoints) const;
 
 	//计算特征点的描述子
-	void calc_descriptors(const vector<vector<Mat>> &dog_pyr, vector<KeyPoint> &keypoints,
+	void calc_descriptors(const vector<vector<Mat>> &dog_pyr, const vector<KeyPoint> &keypoints,
+		Mat &descriptors) const;
+    void calc_descriptors_opencv_parallel_for(const vector<vector<Mat>> &dog_pyr, const vector<KeyPoint> &keypoints,
 		Mat &descriptors) const;
 
 	//特征点检测
@@ -99,4 +101,11 @@ private:
 
 };//注意类结束的分号
 
-#endif
+//#define TEST_AVX  // 通过输出测试结果，观察AVX加速是否成功
+#ifdef TEST_AVX
+static double t_avx_512, t_avx_256, t_ori;
+static void test_simd_find_constr_extrema(const float *prev_ptr, const float *curr_ptr, const float *next_ptr, int c, size_t step, float threshold);
+
+#endif // TEST_AVX
+
+#endif // _SIFT_H_
