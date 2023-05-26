@@ -424,7 +424,7 @@ static bool adjust_local_extrema(const vector<vector<Mat>> &dog_pyr, KeyPoint &k
 
 		float contr = img.at<float>(row, col) + t*0.5f;//特征点响应
 		//Low建议contr阈值是0.03，但是RobHess等建议阈值为0.04/nOctaveLayers
-		if (abs(contr) < contrastThreshold / nOctaveLayers)
+		if (abs(contr) < contrastThreshold / (float)nOctaveLayers)
 			return false;
 
 
@@ -441,11 +441,11 @@ static bool adjust_local_extrema(const vector<vector<Mat>> &dog_pyr, KeyPoint &k
 			return false;
 
 		/*********到目前为止该特征的满足上面所有要求，保存该特征点信息***********/
-		kpt.pt.x = ((float)col + xc)*(1<<octave);//相对于最底层的图像的x坐标
-		kpt.pt.y = ((float)row + xr)*(1<<octave);//相对于最底层图像的y坐标
+		kpt.pt.x = ((float)col + xc) * (float)(1 << octave);//相对于最底层的图像的x坐标
+		kpt.pt.y = ((float)row + xr) * (float)(1 << octave);//相对于最底层图像的y坐标
 		kpt.octave = octave + (layer << 8);//组号保存在低字节，层号保存在高字节
 		//相对于最底层图像的尺度
-		kpt.size = sigma*powf(2.f, (layer + xi) / nOctaveLayers)*(1<<octave);
+		kpt.size = sigma*powf(2.f, ((float)layer + xi) / (float)nOctaveLayers) * (float)(1 << octave);
 		kpt.response = abs(contr);//特征点响应值
 
 		return true;
@@ -461,15 +461,14 @@ static bool adjust_local_extrema(const vector<vector<Mat>> &dog_pyr, KeyPoint &k
 void MySift::find_scale_space_extrema(const vector<vector<Mat>> &dog_pyr, const vector<vector<Mat>> &gauss_pyr,
 	vector<KeyPoint> &keypoints) const
 {
+    keypoints.clear();//先清空keypoints
+
 	int nOctaves = (int)dog_pyr.size();
 	//Low文章建议threshold是0.03，Rob Hess等人使用0.04/nOctaveLayers作为阈值
 	float threshold = (float)(contrastThreshold / nOctaveLayers);
 	const int n = ORI_HIST_BINS;//n=36
 	float hist[n];
 	KeyPoint kpt;
-
-	keypoints.clear();//先清空keypoints
-	//int numKeys = 0;
 
 #ifdef TEST_AVX
     t_avx_512 = t_avx_256 = t_ori = 0.0;
@@ -592,7 +591,7 @@ void MySift::find_scale_space_extrema(const vector<vector<Mat>> &dog_pyr, const 
 						}
 
 						float scale = kpt.size / float (1 << octave);//该特征点相对于本组的尺度
-						float max_hist = clac_orientation_hist(gauss_pyr[octave][layer], 
+						float max_hist = clac_orientation_hist(gauss_pyr[octave][layer],
 							Point(c1, r1), scale, n, hist);
 						float mag_thr = max_hist*ORI_PEAK_RATIO;
 
@@ -626,13 +625,12 @@ void MySift::find_scale_space_extrema(const vector<vector<Mat>> &dog_pyr, const 
 			}
 		}
 	}
+
 #ifdef TEST_AVX
     std::cout << "avx_256_time: " << t_avx_256 << std::endl
               << "avx_512_time: " << t_avx_512 << std::endl
               << "origin  time: " << t_ori << std::endl;
 #endif
-
-	//cout << "初始满足要求特征点个数是: " << numKeys << endl;
 }
 
 
@@ -822,37 +820,81 @@ static void calc_sift_descriptor(const Mat &gauss_image, float main_angle, Point
 /*gauss_pyr表示高斯金字塔
  keypoints表示特征点、
  descriptors表示生成的特征点的描述子*/
-void MySift::calc_descriptors(const vector<vector<Mat>> &gauss_pyr, vector<KeyPoint> &keypoints,
-	Mat &descriptors) const
+void MySift::calc_descriptors(const vector<vector<Mat>> &gauss_pyr, const vector<KeyPoint> &keypoints, Mat &descriptors) const
 {
 	int d = DESCR_WIDTH;//d=4,特征点邻域网格个数是d x d
 	int n = DESCR_HIST_BINS;//n=8,每个网格特征点梯度角度等分为8个方向
-	descriptors.create(keypoints.size(), d*d*n, CV_32FC1);//分配空间
+    int kpts_num = (int)keypoints.size();
+	descriptors.create(kpts_num, d*d*n, CV_32FC1);//分配空间
 
-	for (size_t i = 0; i < keypoints.size(); ++i)//对于每一个特征点
+    std::vector<KeyPoint> kpts;
+    if (double_size) {  // keypoints中的特征点位置是相对于原图片而言的，因此这里需要将特征点的位置扩大2倍
+        kpts.resize(kpts_num);
+        for (size_t i = 0; i < kpts_num; ++i) {
+            kpts[i].pt = keypoints[i].pt * 2.f;
+            kpts[i].octave = keypoints[i].octave;
+            kpts[i].size = keypoints[i].size * 2.f;
+            kpts[i].angle = keypoints[i].angle;
+        }
+    } else {
+        kpts = keypoints;   // shallow copy
+    }
+
+	for (size_t i = 0; i < kpts_num; ++i)//对于每一个特征点
 	{
 		int octaves, layer;
 		//得到特征点所在的组号，层号
-		octaves = keypoints[i].octave & 255;
-		layer = (keypoints[i].octave >> 8) & 255;
+		octaves = kpts[i].octave & 255;
+		layer = (kpts[i].octave >> 8) & 255;
 
 		//得到特征点相对于本组的坐标，不是最底层
-		Point2f pt(keypoints[i].pt.x/(1<<octaves), keypoints[i].pt.y/(1<<octaves));
-		float scale = keypoints[i].size / (1 << octaves);//得到特征点相对于本组的尺度
-		float main_angle = keypoints[i].angle;//特征点主方向
+		Point2f pt(kpts[i].pt.x / (float)(1 << octaves), kpts[i].pt.y / (float)(1 << octaves));
+		float scale = kpts[i].size / (float)(1 << octaves);//得到特征点相对于本组的尺度
+		float main_angle = kpts[i].angle;//特征点主方向
 
-		//计算改点的描述子
-		calc_sift_descriptor(gauss_pyr[octaves][layer],
-			main_angle, pt, scale,
-			d, n, descriptors.ptr<float>((int)i));
-
-		if (double_size)//如果图像尺寸扩大一倍
-		{
-			keypoints[i].pt.x = keypoints[i].pt.x / 2.f;
-			keypoints[i].pt.y = keypoints[i].pt.y / 2.f;
-		}
+		//计算该点的描述子
+		calc_sift_descriptor(gauss_pyr[octaves][layer], main_angle, pt, scale, d, n, descriptors.ptr<float>((int)i));
 	}
-		
+}
+
+/* 在计算每个关键点对应特征子部分进行parallel_for并行化 */
+void MySift::calc_descriptors_opencv_parallel_for(const vector<vector<Mat>> &gauss_pyr, const vector<KeyPoint> &keypoints, Mat &descriptors) const
+{
+	int d = DESCR_WIDTH;//d=4,特征点邻域网格个数是d x d
+	int n = DESCR_HIST_BINS;//n=8,每个网格特征点梯度角度等分为8个方向
+    int kpts_num = (int)keypoints.size();
+	descriptors.create(kpts_num, d*d*n, CV_32FC1);//分配空间
+
+    std::vector<KeyPoint> kpts;
+    if (double_size) {  // keypoints中的特征点位置是相对于原图片而言的，因此这里需要将特征点的位置扩大2倍
+        kpts.resize(kpts_num);
+        for (size_t i = 0; i < kpts_num; ++i) {
+            kpts[i].pt = keypoints[i].pt * 2.f;
+            kpts[i].octave = keypoints[i].octave;
+            kpts[i].size = keypoints[i].size * 2.f;
+            kpts[i].angle = keypoints[i].angle;
+        }
+    } else {
+        kpts = keypoints;   // shallow copy
+    }
+
+    cv::parallel_for_(cv::Range(0, kpts_num), [&](const cv::Range &range){
+        for (int i = range.start; i < range.end; ++i)//对于每一个特征点
+        {
+            int octaves, layer;
+            //得到特征点所在的组号，层号
+            octaves = kpts[i].octave & 255;
+            layer = (kpts[i].octave >> 8) & 255;
+
+            //得到特征点相对于本组的坐标，不是最底层
+            Point2f pt(kpts[i].pt.x / (float)(1 << octaves), kpts[i].pt.y / (float)(1 << octaves));
+            float scale = kpts[i].size / (float)(1 << octaves);//得到特征点相对于本组的尺度
+            float main_angle = kpts[i].angle;//特征点主方向
+
+            //计算该点的描述子
+            calc_sift_descriptor(gauss_pyr[octaves][layer], main_angle, pt, scale, d, n, descriptors.ptr<float>((int)i));
+        }
+    });
 }
 
 /******************************特征点检测*********************************/
@@ -897,7 +939,10 @@ void MySift::detect(const Mat &image, vector<vector<Mat>> &gauss_pyr, vector<vec
 		keypoints.erase(keypoints.begin()+nfeatures,keypoints.end());
 	}
 
-
+    // 重新调整特征点的坐标，若初始图像经过上采样，则特征点坐标是相对于上采样图像的，因此调整回相对于原图像
+    for (auto &kpt : keypoints) {
+        kpt.pt /= 2.f;
+    }
 }
 
 /**********************特征点描述*******************/
@@ -955,7 +1000,7 @@ test_simd_find_constr_extrema(const float *prev_ptr, const float *curr_ptr, cons
     t_avx_256_local = ((double) getTickCount() - t_avx_256_local) / getTickFrequency();
 
     t_avx_512_local = (double) getTickCount();
-    {// 512位向量扩展
+    {// 512位向量扩展    // note: add `-mavxf512` to `CXX_FLAGS`, but causes seg-fault
         // 2X16个元素
 //        __m512 val_vec = _mm512_set_ps(val, val, val, val, val, val, val, val, val, val, val, val, val, val, val, val);
 //        __m512 elements1 = _mm512_set_ps(curr_ptr[c - 1], curr_ptr[c + 1], curr_ptr[c - step - 1], curr_ptr[c - step],
@@ -1026,14 +1071,11 @@ test_simd_find_constr_extrema(const float *prev_ptr, const float *curr_ptr, cons
                                        val <= next_ptr[c + step + 1])));
     t_ori_local = ((double) getTickCount() - t_ori_local) / getTickFrequency();
 
-//    if (flag_avx_512 != flag_avx_256 || flag_avx_512 != flag_origin) {
-//        std::cout << "wrong result. avx_512: " << flag_avx_512 << " avx_256: " << flag_avx_256 << " origin " << flag_origin << std::endl;
+//    if (flag_avx_256 != flag_origin) {
+//        std::cout << "wrong result. avx_256: " << flag_avx_256 << " origin " << flag_origin << std::endl;
+//    } else {
+//        std::cout << "right result" << std::endl;
 //    }
-    if (flag_avx_256 != flag_origin) {
-        std::cout << "wrong result. avx_256: " << flag_avx_256 << " origin " << flag_origin << std::endl;
-    } else {
-        std::cout << "right result" << std::endl;
-    }
     t_avx_512 = t_avx_512 + t_avx_512_local;
     t_avx_256 = t_avx_256 + t_avx_256_local;
     t_ori = t_ori + t_ori_local;

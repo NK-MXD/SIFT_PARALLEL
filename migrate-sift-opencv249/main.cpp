@@ -11,19 +11,27 @@
 #include <filesystem>
 
 void test_fusion();
+void test_compute_and_detect();
 void test_with_opencv_sift();
+void test_compute_desc();
+void test_match();
 
 int main(int argc,char *argv[])
 {
 //	test_fusion();
-    test_with_opencv_sift();
+//    test_compute_and_detect();
+//    test_with_opencv_sift();
+    test_compute_desc();
+//    test_match();
 }
 
 void test_fusion() {
-    Mat image_1 = imread("/home/guo/mypro/CV/lab4-feature-extraction/ref/migrate-sift-opencv249/test_images/ucsb1.jpg", ImreadModes::IMREAD_UNCHANGED);
-	Mat image_2 = imread("/home/guo/mypro/CV/lab4-feature-extraction/ref/migrate-sift-opencv249/test_images/ucsb2.jpg", ImreadModes::IMREAD_UNCHANGED);
+//    Mat image_1 = imread("/home/guo/mypro/CV/lab4-feature-extraction/ref/migrate-sift-opencv249/test_images/ucsb1.jpg", ImreadModes::IMREAD_UNCHANGED);
+//	Mat image_2 = imread("/home/guo/mypro/CV/lab4-feature-extraction/ref/migrate-sift-opencv249/test_images/ucsb2.jpg", ImreadModes::IMREAD_UNCHANGED);
 //	Mat image_1 = imread("/home/guo/mypro/CV/lab4-feature-extraction/feature/assets/Lenna.png", ImreadModes::IMREAD_UNCHANGED);
 //	Mat image_2 = imread("/home/guo/mypro/CV/lab4-feature-extraction/feature/assets/Lenna.png", ImreadModes::IMREAD_UNCHANGED);
+    Mat image_1 = cv::imread("/home/guo/mypro/SIFT_PARALLEL/migrate-sift-opencv249/test_images/peacock.jpg");
+    Mat image_2 = cv::imread("/home/guo/mypro/SIFT_PARALLEL/migrate-sift-opencv249/test_images/peacock.jpg");
 	string change_model = "perspective";
 
 	//创建文件夹保存图像
@@ -135,6 +143,29 @@ void test_fusion() {
 	waitKey(0);
 }
 
+void test_compute_and_detect() {
+    MySift *sift_m;
+    cv::Mat img, img_gray;
+    std::vector<std::vector<cv::Mat>> gpyr, dogpyr;
+    std::vector<cv::KeyPoint> kpts_m;
+    cv::Mat desc_m;
+    double t_detect_m, t_cal_m;
+
+    img = cv::imread("/home/guo/mypro/SIFT_PARALLEL/migrate-sift-opencv249/test_images/peacock.jpg");
+    cv::cvtColor(img, img_gray, cv::COLOR_BGR2GRAY);
+    sift_m = new MySift();
+
+    t_detect_m = (double)cv::getTickCount();
+    sift_m->detect(img_gray, gpyr, dogpyr, kpts_m);
+    t_detect_m = ((double)cv::getTickCount() - t_detect_m) / getTickFrequency();
+    std::cout << "MySift detect time: " << t_detect_m << " kpts size: " << kpts_m.size() << std::endl;
+
+    t_cal_m = (double)cv::getTickCount();
+    sift_m->comput_des(gpyr, kpts_m, desc_m);
+    t_cal_m = ((double)cv::getTickCount() - t_cal_m) / getTickFrequency();
+    std::cout << "MySift compute time: " << t_cal_m << " desc size: " << desc_m.rows << std::endl;
+}
+
 void test_with_opencv_sift() {
     MySift *sift_m;
     cv::Ptr<cv::SIFT> sift_o;
@@ -152,21 +183,88 @@ void test_with_opencv_sift() {
     t_detect_m = (double)cv::getTickCount();
     sift_m->detect(img_gray, gpyr, dogpyr, kpts_m);
     t_detect_m = ((double)cv::getTickCount() - t_detect_m) / getTickFrequency();
+    std::cout << "MySift detect time: " << t_detect_m << " kpts size: " << kpts_m.size() << std::endl;
 
     t_cal_m = (double)cv::getTickCount();
     sift_m->comput_des(gpyr, kpts_m, desc_m);
     t_cal_m = ((double)cv::getTickCount() - t_cal_m) / getTickFrequency();
+    std::cout << "MySift compute time: " << t_cal_m << " desc size: " << desc_m.rows << std::endl;
 
     t_detect_o = (double)cv::getTickCount();
-    sift_o->detectAndCompute(img_gray, cv::noArray(), kpts_o, desc_o);
+    sift_o->detect(img_gray, kpts_o);
     t_detect_o = ((double)cv::getTickCount() - t_detect_o) / getTickFrequency();
+    std::cout << "OpenCV SIFT detect time: " << t_detect_o << " kpts size: " << kpts_o.size() << std::endl;
 
     t_cal_o = (double)cv::getTickCount();
     sift_o->compute(img_gray, kpts_o, desc_o);
     t_cal_o = ((double)cv::getTickCount() - t_cal_o) / getTickFrequency();
-
-    std::cout << "MySift detect time: " << t_detect_m << " kpts size: " << kpts_m.size() << std::endl;
-    std::cout << "MySift compute time: " << t_cal_m << " desc size: " << desc_m.rows << std::endl;
-    std::cout << "OpenCV SIFT detect time: " << t_detect_o << " kpts size: " << kpts_o.size() << std::endl;
     std::cout << "OpenCV SIFT compute time: " << t_cal_o << " desc size: " << desc_o.rows << std::endl;
+
+}
+
+/* 测试的结果：并行加速的特征求解只比串行求解快一倍 */
+void test_compute_desc() {
+    MySift *sift;
+    cv::Mat img, img_gray;
+    std::vector<std::vector<cv::Mat>> gpyr, dogpyr;
+    std::vector<cv::KeyPoint> kpts;
+    cv::Mat desc_origin, desc_opencv_para;
+    double t_detect, t_cal_origin, t_cal_opencv_para;
+
+    img = cv::imread("/home/guo/mypro/SIFT_PARALLEL/migrate-sift-opencv249/test_images/peacock.jpg");
+    cv::cvtColor(img, img_gray, cv::COLOR_BGR2GRAY);
+    sift = new MySift();
+
+    t_detect = (double)cv::getTickCount();
+    sift->detect(img_gray, gpyr, dogpyr, kpts);
+    t_detect = ((double)cv::getTickCount() - t_detect) / getTickFrequency();
+    std::cout << "MySift detect time: " << t_detect << " kpts size: " << kpts.size() << std::endl;
+
+    t_cal_opencv_para = (double)cv::getTickCount();
+    sift->calc_descriptors_opencv_parallel_for(gpyr, kpts, desc_opencv_para);
+    t_cal_opencv_para = ((double)cv::getTickCount() - t_cal_opencv_para) / getTickFrequency();
+    std::cout << "MySift opencv `parallel_for` compute time: " << t_cal_opencv_para << std::endl;
+
+    t_cal_origin = (double)cv::getTickCount();
+    sift->calc_descriptors(gpyr, kpts, desc_origin);
+    t_cal_origin = ((double)cv::getTickCount() - t_cal_origin) / getTickFrequency();
+    std::cout << "MySift serial compute time: " << t_cal_origin << std::endl;
+}
+
+/* 测试的结果：在求特征子处进行粗粒度的并行化匹配效果与原算法相同 */
+void test_match() {
+    MySift *sift;
+    cv::Mat img1, img2, img1_gray, img2_gray, img_match;
+    std::vector<std::vector<cv::Mat>> gpyr1, dogpyr1, gpyr2, dogpyr2;
+    std::vector<cv::KeyPoint> kpts1, kpts2;
+    cv::Mat desc1, desc2;
+    cv::Ptr<cv::DescriptorMatcher> matcher;
+    std::vector<std::vector<cv::DMatch>> matches;
+    std::vector<cv::DMatch> good_matches;
+    double t_detect, t_cal, t_match;
+
+    sift = new MySift();
+    matcher = cv::DescriptorMatcher::create("FlannBased");
+    img1 = cv::imread("/home/guo/mypro/SIFT_PARALLEL/migrate-sift-opencv249/test_images/test1.jpg");
+    img2 = cv::imread("/home/guo/mypro/SIFT_PARALLEL/migrate-sift-opencv249/test_images/test2.jpg");
+    cv::resize(img1, img1, cv::Size(), 0.25, 0.25);
+    cv::resize(img2, img2, cv::Size(), 0.25, 0.25);
+    cv::cvtColor(img1, img1_gray, cv::COLOR_BGR2GRAY);
+    cv::cvtColor(img2, img2_gray, cv::COLOR_BGR2GRAY);
+    sift->detect(img1_gray, gpyr1, dogpyr1, kpts1);
+    sift->detect(img2_gray, gpyr2, dogpyr2, kpts2);
+    sift->calc_descriptors(gpyr1, kpts1, desc1);
+    sift->calc_descriptors(gpyr2, kpts2, desc2);
+//    sift->calc_descriptors_opencv_parallel_for(gpyr1, kpts1, desc1);
+//    sift->calc_descriptors_opencv_parallel_for(gpyr2, kpts2, desc2);
+
+    matcher->knnMatch(desc1, desc2, matches, 2);
+    for (int i = 0; i < matches.size(); i++) {
+        if (matches[i][0].distance < 0.6 * matches[i][1].distance) {
+            good_matches.push_back(matches[i][0]);
+        }
+    }
+    cv::drawMatches(img1, kpts1, img2, kpts2, good_matches, img_match);
+    cv::imshow("match", img_match);
+    cv::waitKey(0);
 }

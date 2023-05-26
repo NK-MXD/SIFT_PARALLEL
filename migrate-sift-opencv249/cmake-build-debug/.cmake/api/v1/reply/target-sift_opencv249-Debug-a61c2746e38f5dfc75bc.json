@@ -68,7 +68,7 @@
 			"compileCommandFragments" : 
 			[
 				{
-					"fragment" : " -march=native -mavx2 -g -fdiagnostics-color=always"
+					"fragment" : " -g -march=native -mavx2 -g -fdiagnostics-color=always"
 				}
 			],
 			"includes" : 
@@ -95,7 +95,7 @@
 		"commandFragments" : 
 		[
 			{
-				"fragment" : "-march=native -mavx2 -g",
+				"fragment" : "-g -march=native -mavx2 -g",
 				"role" : "flags"
 			},
 			{
