@@ -76,15 +76,18 @@ public:
 	//DOG金字塔特征点检测
 	void find_scale_space_extrema(const vector<vector<Mat>> &dog_pyr, const vector<vector<Mat>> &gauss_pyr,
 		vector<KeyPoint> &keypoints) const;
+    void find_scale_space_extrema_avx(const vector<vector<Mat>> &dog_pyr, const vector<vector<Mat>> &gauss_pyr,
+	vector<KeyPoint> &keypoints) const;
 
 	//计算特征点的描述子
 	void calc_descriptors(const vector<vector<Mat>> &dog_pyr, const vector<KeyPoint> &keypoints, Mat &descriptors) const;
     void calc_descriptors_opencv_parallel_for(const vector<vector<Mat>> &dog_pyr, const vector<KeyPoint> &keypoints, Mat &descriptors) const;
 	/* void calc_descriptors_omp_parallel_for(const vector<vector<Mat>> &dog_pyr, const vector<KeyPoint> &keypoints, Mat &descriptors) const; */
 
-
 	//特征点检测
 	void detect(const Mat &image, vector<vector<Mat>> &gauss_pyr, vector<vector<Mat>> &dog_pyr,
+		vector<KeyPoint> &keypoints) const;
+	void detect_avx(const Mat &image, vector<vector<Mat>> &gauss_pyr, vector<vector<Mat>> &dog_pyr,
 		vector<KeyPoint> &keypoints) const;
 
 	//特征点描述
