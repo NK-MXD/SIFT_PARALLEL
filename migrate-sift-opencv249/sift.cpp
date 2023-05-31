@@ -15,6 +15,12 @@
 /* #include <omp.h> */
 #include <immintrin.h>
 
+/*************************`pad`到8的倍数*****************************/
+static inline int pad(int x)
+{
+    return (x + 7) & -8;
+}
+
 /******************根据输入图像大小计算高斯金字塔的组数****************************/
 /*image表示原始输入灰度图像,inline函数必须在声明处定义
 double_size_image表示是否在构建金字塔之前上采样原始图像
@@ -193,30 +199,38 @@ void MySift::build_dog_pyramid(vector<vector<Mat>> &dog_pyramid, const vector<ve
  函数返回值是直方图hist中的最大数值*/
 static float clac_orientation_hist_avx(const Mat &image, Point pt, float scale, int n, float *hist)
 {
+    int rows = image.rows;
+    int cols = image.cols;
+
 	int radius = cvRound(ORI_RADIUS * scale);//特征点邻域半径(3*1.5*scale)
 	int len = (2 * radius + 1) * (2 * radius + 1);//特征点邻域像素总个数（最大值）
+    int len_pad = pad(len);
+    int n_pad = pad(n) + 16;    // 留足够大的空间，方便后面的计算，实际使用从`8`到`n + 8`的空间
+//    std::cout << "len = " << len << ", len / 8 = " << len / 8 << ", len_pad = " << len_pad << ", len_pad / 8 = " << len_pad / 8 << std::endl; // works!
 
 	float sigma = ORI_SIG_FCTR * scale;//特征点邻域高斯权重标准差(1.5*scale)
-	float exp_scale = -1.f / (2 * sigma*sigma);
+	float exp_scale = -1.f / (2 * sigma * sigma);
 
-	//使用AutoBuffer分配一段内存，这里多出4个空间的目的是为了方便后面平滑直方图的需要
-	/* AutoBuffer<float> buffer(5 * len + n + 4); */
-	float *buffer = new float[5 * len + n + 4];
-	//X保存水平差分，Y保存数值差分，Mag保存梯度幅度，Ori保存梯度角度，W保存高斯权重
-	float *X = buffer, *Y = X + len, *Mag = Y + len, *Ori = Mag + len, *W = Ori + len;
-	float *temp_hist = W + len + 2;//临时保存直方图数据
-
-	for (int i = 0; i < n; ++i)
-		temp_hist[i] = 0.f;//数据清零
+    // 开辟缓冲区
+    float buf_x[len_pad], *X = buf_x;
+    float buf_y[len_pad], *Y = buf_y;
+    float buf_mag[len_pad], *Mag = buf_mag;
+    float buf_ori[len_pad], *Ori = buf_ori;
+    float buf_w[len_pad], *W = buf_w;
+    float buf_temp_hist[n_pad], *temp_hist = buf_temp_hist + 8;
+	for (int i = 0; i < n_pad; ++i)
+    {
+        temp_hist[i] = 0.f;
+    }
 
 	//计算邻域像素的水平差分和竖直差分
-	int k = 0;
-	for (int i = -radius; i < radius; ++i)
+	int k = 0;  // 记录实际满足条件的像素个数
+	for (int i = -radius; i <= radius; ++i)
 	{
 		int y = pt.y + i;
 		if (y<=0 || y>=image.rows - 1)
 			continue;
-		for (int j = -radius; j < radius; ++j)
+		for (int j = -radius; j <= radius; ++j)
 		{
 			int x = pt.x + j;
 			if (x<=0 || x>=image.cols - 1)
@@ -224,7 +238,7 @@ static float clac_orientation_hist_avx(const Mat &image, Point pt, float scale, 
 
 			float dx = image.at<float>(y,x+1) - image.at<float>(y,x-1);
 			float dy = image.at<float>(y + 1, x) - image.at<float>(y - 1, x);
-			X[k] = dx; Y[k] = dy; W[k] = (i*i + j*j)*exp_scale;
+			X[k] = dx; Y[k] = dy; W[k] = (i * i + j * j) * exp_scale;
 			++k;
 		}
 	}
@@ -334,7 +348,6 @@ static float clac_orientation_hist_avx(const Mat &image, Point pt, float scale, 
 	 	if (hist[i] > max_value)
 	 		max_value = hist[i];
 	 }
-	delete []buffer;
 	return max_value;
 }
 
