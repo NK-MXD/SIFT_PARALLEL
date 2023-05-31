@@ -20,9 +20,9 @@ void test_match();
 int main(int argc,char *argv[])
 {
 //	test_fusion();
-//    test_compute_and_detect();
+    test_compute_and_detect();
 //    test_with_opencv_sift();
-    test_compute_desc();
+//    test_compute_desc();
 //    test_match();
 }
 
@@ -152,7 +152,8 @@ void test_compute_and_detect() {
     cv::Mat desc_m;
     double t_detect_m, t_cal_m;
 
-    img = cv::imread("/home/guo/mypro/SIFT_PARALLEL/migrate-sift-opencv249/test_images/peacock.jpg");
+    img = cv::imread("/home/guo/mypro/SIFT_PARALLEL/migrate-sift-opencv249/test_images/test1.jpg");
+    cv::resize(img, img, cv::Size(img.cols / 2, img.rows / 2));
     cv::cvtColor(img, img_gray, cv::COLOR_BGR2GRAY);
     sift_m = new MySift();
 
@@ -176,7 +177,8 @@ void test_with_opencv_sift() {
     cv::Mat desc_m, desc_o;
     double t_detect_m, t_cal_m, t_detect_o, t_cal_o;
 
-    img = cv::imread("/home/guo/mypro/SIFT_PARALLEL/migrate-sift-opencv249/test_images/peacock.jpg");
+    img = cv::imread("/home/guo/mypro/SIFT_PARALLEL/migrate-sift-opencv249/test_images/test1.jpg");
+    cv::resize(img, img, cv::Size(img.cols / 2, img.rows / 2));
     cv::cvtColor(img, img_gray, cv::COLOR_BGR2GRAY);
     sift_m = new MySift();
     sift_o = cv::SIFT::create();
@@ -200,7 +202,6 @@ void test_with_opencv_sift() {
     sift_o->compute(img_gray, kpts_o, desc_o);
     t_cal_o = ((double)cv::getTickCount() - t_cal_o) / getTickFrequency();
     std::cout << "OpenCV SIFT compute time: " << t_cal_o << " desc size: " << desc_o.rows << std::endl;
-
 }
 
 /* 测试的结果：并行加速的特征求解只比串行求解快一倍 */
@@ -209,27 +210,37 @@ void test_compute_desc() {
     cv::Mat img, img_gray;
     std::vector<std::vector<cv::Mat>> gpyr, dogpyr;
     std::vector<cv::KeyPoint> kpts;
-    cv::Mat desc_origin, desc_opencv_para;
-    double t_detect, t_cal_origin, t_cal_opencv_para;
+    cv::Mat desc;
+    double t; 
 
     img = cv::imread("/home/guo/mypro/SIFT_PARALLEL/migrate-sift-opencv249/test_images/peacock.jpg");
+    resize(img, img, cv::Size(), 0.25, 0.25);
     cv::cvtColor(img, img_gray, cv::COLOR_BGR2GRAY);
     sift = new MySift();
 
-    t_detect = (double)cv::getTickCount();
+    t = (double)cv::getTickCount();
     sift->detect(img_gray, gpyr, dogpyr, kpts);
-    t_detect = ((double)cv::getTickCount() - t_detect) / getTickFrequency();
-    std::cout << "MySift detect time: " << t_detect << " kpts size: " << kpts.size() << std::endl;
+    t = ((double)cv::getTickCount() - t) / getTickFrequency();
+    std::cout << "MySift detect time: " << t << " kpts size: " << kpts.size() << std::endl;
 
-    t_cal_opencv_para = (double)cv::getTickCount();
-    sift->calc_descriptors_opencv_parallel_for(gpyr, kpts, desc_opencv_para);
-    t_cal_opencv_para = ((double)cv::getTickCount() - t_cal_opencv_para) / getTickFrequency();
-    std::cout << "MySift opencv `parallel_for` compute time: " << t_cal_opencv_para << std::endl;
+    t = (double)cv::getTickCount();
+    sift->calc_descriptors_opencv_parallel_for(gpyr, kpts, desc);
+    t = ((double)cv::getTickCount() - t) / getTickFrequency();
+    std::cout << "MySift opencv `parallel_for` compute time: " << t << std::endl;
 
-    t_cal_origin = (double)cv::getTickCount();
-    sift->calc_descriptors(gpyr, kpts, desc_origin);
-    t_cal_origin = ((double)cv::getTickCount() - t_cal_origin) / getTickFrequency();
-    std::cout << "MySift serial compute time: " << t_cal_origin << std::endl;
+	// 经过测试, 该方法比opencv`parallel_for`慢
+	// 另外，使用omp加速，在该情况下会出现若干未可知的运行时bug，可能和编译器优化有关。
+	// 可能检测的关键点数量为0，`double free or corruption`，或者`corrupt size vs. prev_size while sonsolidating`
+    /* t = (double)cv::getTickCount(); */
+    /* sift->calc_descriptors_omp_parallel_for(gpyr, kpts, desc); */
+    /* t = ((double)cv::getTickCount() - t) / getTickFrequency(); */
+    /* std::cout << "MySift omp parallel_for compute time: " << t << std::endl; */
+
+
+    t = (double)cv::getTickCount();
+    sift->calc_descriptors(gpyr, kpts, desc);
+    t = ((double)cv::getTickCount() - t) / getTickFrequency();
+    std::cout << "MySift serial compute time: " << t << std::endl;
 }
 
 /* 测试的结果：在求特征子处进行粗粒度的并行化匹配效果与原算法相同 */

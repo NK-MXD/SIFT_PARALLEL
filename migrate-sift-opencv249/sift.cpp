@@ -1,5 +1,6 @@
 #include"sift.h"
 
+#include <opencv2/core/types.hpp>
 #include<string>
 #include<opencv2/core/base.hpp>
 #include<opencv2/core/core.hpp>//opencv基本数据结构
@@ -11,7 +12,7 @@
 #include<iostream>//输入输出
 #include<vector>//vector
 #include<algorithm>
-#include <omp.h>
+/* #include <omp.h> */
 #include <immintrin.h>
 
 /******************根据输入图像大小计算高斯金字塔的组数****************************/
@@ -195,7 +196,8 @@ static float clac_orientation_hist(const Mat &image, Point pt, float scale, int 
 	float exp_scale = -1.f / (2 * sigma*sigma);
 
 	//使用AutoBuffer分配一段内存，这里多出4个空间的目的是为了方便后面平滑直方图的需要
-	AutoBuffer<float> buffer(5 * len + n + 4);
+	/* AutoBuffer<float> buffer(5 * len + n + 4); */
+	float *buffer = new float[5 * len + n + 4];
 	//X保存水平差分，Y保存数值差分，Mag保存梯度幅度，Ori保存梯度角度，W保存高斯权重
 	float *X = buffer, *Y = X + len, *Mag = Y + len, *Ori = Mag + len, *W = Ori + len;
 	float *temp_hist = W + len + 2;//临时保存直方图数据
@@ -328,6 +330,7 @@ static float clac_orientation_hist(const Mat &image, Point pt, float scale, int 
 	// 	if (hist[i]>max_value)
 	// 		max_value = hist[i];
 	// }
+	delete []buffer;
 	return max_value;
 }
 
@@ -486,7 +489,7 @@ void MySift::find_scale_space_extrema(const vector<vector<Mat>> &dog_pyr, const 
 			size_t step = curr_img.step1();//一行元素所占宽度
 
 			// openMP在这里进行并行化
-            #pragma omp parallel for
+            //#pragma omp parallel for
             for (int r = IMG_BORDER; r < num_row - IMG_BORDER; ++r)
             {
                 const float* curr_ptr = curr_img.ptr<float>(r);
@@ -499,10 +502,12 @@ void MySift::find_scale_space_extrema(const vector<vector<Mat>> &dog_pyr, const 
                     test_simd_find_constr_extrema(prev_ptr, curr_ptr, next_ptr, c, step, threshold);
 #endif // TEST_AVX
                     float val = curr_ptr[c];
+					bool is_extrema = false;
+#ifdef USE_AVX
                     // SIMD求得所有元素的最大值, 然后进行计算
                     // 第一层元素存放: 
                     // 4X8 32个元素, 将32个元素存放到向量中进行比较(256)
-                    /*__m256 val_vec = _mm256_set_ps(val, val, val, val, val, val, val, val);
+                    __m256 val_vec = _mm256_set_ps(val, val, val, val, val, val, val, val);
                     __m256 elements1 = _mm256_set_ps(curr_ptr[c - 1], curr_ptr[c + 1], curr_ptr[c - step - 1], curr_ptr[c - step], 
                                         curr_ptr[c - step + 1], curr_ptr[c + step - 1], curr_ptr[c + step], curr_ptr[c + step + 1]);
                     __m256 elements2 = _mm256_set_ps(prev_ptr[c], prev_ptr[c - 1], prev_ptr[c - step + 1], prev_ptr[c - step - 1],
@@ -527,12 +532,11 @@ void MySift::find_scale_space_extrema(const vector<vector<Mat>> &dog_pyr, const 
                     int max_mask = _mm256_movemask_ps(max_res);
                     int min_mask = _mm256_movemask_ps(min_res);
                     // 检查提取的掩码是否等于预期值（0xFF），以确定所有元素是否相等
-
-                    if(max_mask == 0xFF || min_mask == 0xFF){*/
-
+					is_extrema = (max_mask == 0xFF || min_mask == 0xFF);
+#elif defined(USE_AVX_512)
                     // 512位向量扩展
                     // 2X16个元素
-                    /*__m512 val_vec = _mm512_set_ps(val, val, val, val, val, val, val, val, val, val, val, val, val, val, val, val);
+                    __m512 val_vec = _mm512_set_ps(val, val, val, val, val, val, val, val, val, val, val, val, val, val, val, val);
                     __m512 elements1 = _mm512_set_ps(curr_ptr[c - 1], curr_ptr[c + 1], curr_ptr[c - step - 1], curr_ptr[c - step],
                                             curr_ptr[c - step + 1], curr_ptr[c + step - 1], curr_ptr[c + step], curr_ptr[c + step + 1],
                                             prev_ptr[c], prev_ptr[c - 1], prev_ptr[c - step + 1], prev_ptr[c - step - 1],
@@ -553,11 +557,9 @@ void MySift::find_scale_space_extrema(const vector<vector<Mat>> &dog_pyr, const 
                     __mmask16 min_res = _mm512_cmp_ps_mask(val_vec, min_result, _CMP_EQ_OQ);
 
                     //cout <<max_res<< " "<< min_res << "\n";
-                    if (max_res == 0xFFFF || min_res == 0xFFFF) {*/
-
-
-                    if (abs(val) > threshold &&
-                        ((val > 0 && val >= curr_ptr[c - 1] && val >= curr_ptr[c + 1] &&
+					is_extrema = (max_res == 0xFFFF || min_res == 0xFFFF);
+#else // serial
+					is_extrema = (abs(val) > threshold && ((val > 0 && val >= curr_ptr[c - 1] && val >= curr_ptr[c + 1] &&
                             val >= curr_ptr[c - step - 1] && val >= curr_ptr[c - step] && val >= curr_ptr[c - step + 1] &&
                             val >= curr_ptr[c + step - 1] && val >= curr_ptr[c + step] && val >= curr_ptr[c + step + 1] &&
 
@@ -570,16 +572,18 @@ void MySift::find_scale_space_extrema(const vector<vector<Mat>> &dog_pyr, const 
                             val >= next_ptr[c + step - 1] && val >= next_ptr[c + step] && val >= next_ptr[c + step + 1]) 
                             ||
                             (val < 0 && val <= curr_ptr[c - 1] && val <= curr_ptr[c + 1] &&
-                                val <= curr_ptr[c - step - 1] && val <= curr_ptr[c - step] && val <= curr_ptr[c - step + 1] &&
-                                val <= curr_ptr[c + step - 1] && val <= curr_ptr[c + step] && val <= curr_ptr[c + step + 1] &&
+							val <= curr_ptr[c - step - 1] && val <= curr_ptr[c - step] && val <= curr_ptr[c - step + 1] &&
+							val <= curr_ptr[c + step - 1] && val <= curr_ptr[c + step] && val <= curr_ptr[c + step + 1] &&
 
-                                val <= prev_ptr[c] && val <= prev_ptr[c - 1] && val <= prev_ptr[c + 1] &&
-                                val <= prev_ptr[c - step - 1] && val <= prev_ptr[c - step] && val <= prev_ptr[c - step + 1] &&
-                                val <= prev_ptr[c + step - 1] && val <= prev_ptr[c + step] && val <= prev_ptr[c + step + 1] &&
+							val <= prev_ptr[c] && val <= prev_ptr[c - 1] && val <= prev_ptr[c + 1] &&
+							val <= prev_ptr[c - step - 1] && val <= prev_ptr[c - step] && val <= prev_ptr[c - step + 1] &&
+							val <= prev_ptr[c + step - 1] && val <= prev_ptr[c + step] && val <= prev_ptr[c + step + 1] &&
 
-                                val <= next_ptr[c] && val <= next_ptr[c - 1] && val <= next_ptr[c + 1] &&
-                                val <= next_ptr[c - step - 1] && val <= next_ptr[c - step] && val <= next_ptr[c - step + 1] &&
-                                val <= next_ptr[c + step - 1] && val <= next_ptr[c + step] && val <= next_ptr[c + step + 1]))){
+							val <= next_ptr[c] && val <= next_ptr[c - 1] && val <= next_ptr[c + 1] &&
+							val <= next_ptr[c - step - 1] && val <= next_ptr[c - step] && val <= next_ptr[c - step + 1] &&
+							val <= next_ptr[c + step - 1] && val <= next_ptr[c + step] && val <= next_ptr[c + step + 1])));
+#endif // end of check extrema
+					if (is_extrema) {
 						//++numKeys;
 						//获得特征点初始行号，列号，组号，组内层号
 						int r1 = r, c1 = c, octave = i, layer = j;
@@ -661,7 +665,8 @@ static void calc_sift_descriptor(const Mat &gauss_image, float main_angle, Point
 	int len = (2 * radius + 1)*(2 * radius + 1);
 	int histlen = (d + 2)*(d + 2)*(n + 2);
 	
-	AutoBuffer<float> buf(7 * len + histlen);
+	/* AutoBuffer<float> buf(7 * len + histlen); */
+	float *buf = new float[7 * len + histlen];
 	//X保存水平差分，Y保存竖直差分，Mag保存梯度幅度，Angle保存特征点方向,W保存高斯权重
 	float *X = buf, *Y = X + len, *Mag = Y + len, *Angle = Mag + len, *W = Angle + len;
 	float *RBin = W + len, *CBin = RBin + len, *hist = CBin + len;
@@ -812,6 +817,7 @@ static void calc_sift_descriptor(const Mat &gauss_image, float main_angle, Point
 	{
 		descriptor[i] = descriptor[i] /norm;
 	}	
+	delete [] buf;
 
 }
 
@@ -881,10 +887,9 @@ void MySift::calc_descriptors_opencv_parallel_for(const vector<vector<Mat>> &gau
     cv::parallel_for_(cv::Range(0, kpts_num), [&](const cv::Range &range){
         for (int i = range.start; i < range.end; ++i)//对于每一个特征点
         {
-            int octaves, layer;
             //得到特征点所在的组号，层号
-            octaves = kpts[i].octave & 255;
-            layer = (kpts[i].octave >> 8) & 255;
+            int octaves = kpts[i].octave & 255;
+            int layer = (kpts[i].octave >> 8) & 255;
 
             //得到特征点相对于本组的坐标，不是最底层
             Point2f pt(kpts[i].pt.x / (float)(1 << octaves), kpts[i].pt.y / (float)(1 << octaves));
@@ -896,6 +901,52 @@ void MySift::calc_descriptors_opencv_parallel_for(const vector<vector<Mat>> &gau
         }
     });
 }
+
+/* 在计算每个关键点对应特征子部分进行parallel_for并行化 */
+/* void MySift::calc_descriptors_omp_parallel_for(const vector<vector<Mat>> &gauss_pyr, const vector<KeyPoint> &keypoints, Mat &descriptors) const */
+/* { */
+/* 	int d = DESCR_WIDTH;//d=4,特征点邻域网格个数是d x d */
+/* 	int n = DESCR_HIST_BINS;//n=8,每个网格特征点梯度角度等分为8个方向 */
+/*     int kpts_num = (int)keypoints.size(); */
+/* 	descriptors.create(kpts_num, d*d*n, CV_32FC1);//分配空间 */
+
+/*     std::vector<KeyPoint> kpts; */
+/*     if (double_size) {  // keypoints中的特征点位置是相对于原图片而言的，因此这里需要将特征点的位置扩大2倍 */
+/*         kpts.resize(kpts_num); */
+/*         for (size_t i = 0; i < kpts_num; ++i) { */
+/*             kpts[i].pt = keypoints[i].pt * 2.f; */
+/*             kpts[i].octave = keypoints[i].octave; */
+/*             kpts[i].size = keypoints[i].size * 2.f; */
+/*             kpts[i].angle = keypoints[i].angle; */
+/*         } */
+/*     } else { */
+/*         kpts = keypoints;   // shallow copy */
+/*     } */
+	
+/* 	int i, octaves, layer; */
+/* 	float scale, main_angle; */
+/* 	Point2f pt; */
+/* #pragma omp parallel for num_threads(NUM_THREADS) default(none) \ */
+/* 	private(i, octaves, layer, pt, scale, main_angle) \ */
+/* 	shared(kpts, kpts_num, descriptors, gauss_pyr, d, n) \ */
+/* 	schedule(static, 1) */
+/* 	for (i = 0; i < kpts_num; ++i)//对于每一个特征点 */
+/* 	{ */
+/* 		//得到特征点所在的组号，层号 */
+/* 		octaves = kpts[i].octave & 255; */
+/* 		layer = (kpts[i].octave >> 8) & 255; */
+
+/* 		//得到特征点相对于本组的坐标，不是最底层 */
+/* 		pt.x = kpts[i].pt.x / (float)(1 << octaves); */
+/* 		pt.y = kpts[i].pt.y / (float)(1 << octaves); */
+/* 		scale = kpts[i].size / (float)(1 << octaves);//得到特征点相对于本组的尺度 */
+/* 		main_angle = kpts[i].angle;//特征点主方向 */
+
+/* 		//计算该点的描述子 */
+/* 		calc_sift_descriptor(gauss_pyr[octaves][layer], main_angle, pt, scale, d, n, descriptors.ptr<float>((int)i)); */
+/* 	} */
+/* } */
+
 
 /******************************特征点检测*********************************/
 /*image表示输入的图像
