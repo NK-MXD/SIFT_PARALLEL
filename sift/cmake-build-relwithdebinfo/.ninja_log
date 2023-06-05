@@ -1,6 +1,0 @@
-# ninja log v5
-0	102	1685949986072627535	CMakeFiles/sift.dir/main.cpp.o	44e2fca8c3a641bc
-1	6137	1685949992106965041	CMakeFiles/sift.dir/sift.cpp.o	f1967302bf88e81f
-6413	6794	1685953490280779819	sift	969a0d8ed2cc29d5
-1	6279	1685949992251019088	CMakeFiles/sift.dir/demo/test_match.cpp.o	81845dd0dc71599
-4	6413	1685953489900765617	CMakeFiles/sift.dir/demo/test_omp.cpp.o	76a332dd9c7681fd
