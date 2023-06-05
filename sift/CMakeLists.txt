@@ -19,6 +19,6 @@ endif()
 
 include_directories(${OpenCV_INCLUDE_DIRS})
 
-add_executable(sift main.cpp sift.h sift.cpp demo/test_match.cpp demo/test_omp.cpp demo/test_multithreading.cpp mylist.h)
+add_executable(sift main.cpp sift.h sift.cpp demo/test_match.cpp demo/test_multithreading.cpp demo/test_omp.cpp)
 
 target_link_libraries(sift ${OpenCV_LIBS})
