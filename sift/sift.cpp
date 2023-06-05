@@ -823,7 +823,7 @@ void SiftOmp::find_local_extrema(const std::vector<std::vector<cv::Mat>> &dogpyr
     float threshold = (float)(contrastThreshold / nOctaveLayers);
     int nOctaves = dogpyr.size();
     std::vector<std::vector<LocalExtrema>> threads_extrema(nthreads);
-#pragma omp parallel default(none) shared(nOctaves, nOctaveLayers, dogpyr, threshold, threads_extrema)
+#pragma omp parallel num_threads(nthreads) default(none) shared(nOctaves, nOctaveLayers, dogpyr, threshold, threads_extrema, std::cout)
     for (int i = 0; i < nOctaves; ++i)//对于每一组
     {
         for (int j = 1; j <= nOctaveLayers; ++j)//对于组内每一层
@@ -880,13 +880,15 @@ void SiftOmp::find_local_extrema(const std::vector<std::vector<cv::Mat>> &dogpyr
                                     val <= next_ptr[c + step - 1] && val <= next_ptr[c + step] &&
                                     val <= next_ptr[c + step + 1])));
                     if (is_extrema) {
-                        threads_extrema[omp_get_thread_num()].emplace_back(
-                                LocalExtrema{
+                        {
+                            LocalExtrema le{
                                     .r = r,
                                     .c = c,
                                     .octave = i,
                                     .layer = j
-                                });
+                            };
+                            threads_extrema[omp_get_thread_num()].emplace_back(le);
+                        }
                     }
                 }
             }
@@ -908,7 +910,7 @@ SiftOmp::adjust(const std::vector<std::vector<cv::Mat>> &dogpyr, const std::vect
     int nExtrema = extrema.size();
     std::vector<std::vector<cv::KeyPoint>> threads_kpts(nthreads);
     std::vector<std::vector<LocalExtrema>> threads_extrema_adjust(nthreads);
-#pragma omp parallel for schedule(dynamic) default(none) shared(nExtrema, extrema, dogpyr, threads_kpts, threads_extrema_adjust)
+#pragma omp parallel for num_threads(nthreads) schedule(dynamic) default(none) shared(nExtrema, extrema, dogpyr, threads_kpts, threads_extrema_adjust)
     for (int j = 0; j < nExtrema; j++) {
         int thread_id = omp_get_thread_num();
         const LocalExtrema &e = extrema[j];
@@ -1304,6 +1306,7 @@ void SiftOpencvPara::compute(const std::vector<std::vector<cv::Mat>> &gpyr, cons
 
 void SiftOpencvPara::find_local_extrema(const std::vector<std::vector<cv::Mat>> &dogpyr, std::vector<LocalExtrema> &extrema) const {
     extrema.clear();
+    // TODO: fix bug!!!
     float threshold = (float)(contrastThreshold / nOctaveLayers);
     int nOctaves = dogpyr.size();
     MyList<LocalExtrema> extrema_list[nthreads];
@@ -1368,9 +1371,7 @@ void SiftOpencvPara::find_local_extrema(const std::vector<std::vector<cv::Mat>> 
                                     .octave = i,
                                     .layer = j
                             };
-                            int thread_id = cv::getThreadNum();
-                            std::cout << thread_id << std::endl;
-//                            extrema_list[thread_id].push_back(e);
+                            extrema.push_back(e);
                         }
                     }
                 }

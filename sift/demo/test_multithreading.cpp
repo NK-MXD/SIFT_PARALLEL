@@ -5,10 +5,10 @@
 #include "../sift.h"
 
 void test_multithreading() {
-    SiftOpencvPara *sift_opencv_mt;
+    SiftOmp *sift;
     double t;
     double ratio = 0.6;
-    int nthreads = 8;
+    int nthreads = 2;
     cv::Mat img1, img2, img1_gray, img2_gray, img_match;
     std::vector<std::vector<cv::Mat>> gpyr1, dogpyr1, gpyr2, dogpyr2;
     std::vector<cv::KeyPoint> kpts1, kpts2;
@@ -22,28 +22,29 @@ void test_multithreading() {
     cv::resize(img2, img2, cv::Size(img2.cols / 2, img2.rows / 2));
     cv::cvtColor(img1, img1_gray, cv::COLOR_BGR2GRAY);
     cv::cvtColor(img2, img2_gray, cv::COLOR_BGR2GRAY);
-    sift_opencv_mt = new SiftOpencvPara(nthreads);
+    sift = new SiftOmp(nthreads);
     t = (double)cv::getTickCount();
-    sift_opencv_mt->detect(img1_gray, gpyr1, dogpyr1, kpts1);
+    sift->detect(img1_gray, gpyr1, dogpyr1, kpts1);
     t = ((double)cv::getTickCount() - t) / cv::getTickFrequency();
     std::cout << "sift_opencv_mt detect img1 time: " << t << " , kpts1 size: " << kpts1.size() << std::endl;
 
     t = (double)cv::getTickCount();
-    sift_opencv_mt->compute(gpyr1, kpts1, desc1);
+    sift->compute(gpyr1, kpts1, desc1);
     t = ((double)cv::getTickCount() - t) / cv::getTickFrequency();
     std::cout << "sift_opencv_mt compute img1 time: " << t << std::endl;
 
     t = (double)cv::getTickCount();
-    sift_opencv_mt->detect(img2_gray, gpyr2, dogpyr2, kpts2);
+    sift->detect(img2_gray, gpyr2, dogpyr2, kpts2);
     t = ((double)cv::getTickCount() - t) / cv::getTickFrequency();
     std::cout << "sift_opencv_mt detect img2 time: " << t << ", kpts2 size: " << kpts2.size() << std::endl;
 
     t = (double)cv::getTickCount();
-    sift_opencv_mt->compute(gpyr2, kpts2, desc2);
+    sift->compute(gpyr2, kpts2, desc2);
     t = ((double)cv::getTickCount() - t) / cv::getTickFrequency();
     std::cout << "sift_opencv_mt compute img2 time: " << t << std::endl;
 
     matches.clear();
+    matcher = cv::DescriptorMatcher::create("BruteForce");
     matcher->knnMatch(desc1, desc2, matches, 2);
     std::cout << "sift_opencv_mt matches size: " << matches.size() << std::endl;
 

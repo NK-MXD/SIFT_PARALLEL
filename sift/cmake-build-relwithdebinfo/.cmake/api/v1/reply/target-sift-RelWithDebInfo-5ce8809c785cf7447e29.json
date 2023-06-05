@@ -94,8 +94,7 @@
 				2,
 				3,
 				4,
-				5,
-				6
+				5
 			]
 		}
 	],
@@ -461,8 +460,7 @@
 				2,
 				3,
 				4,
-				5,
-				6
+				5
 			]
 		},
 		{
@@ -470,7 +468,7 @@
 			"sourceIndexes" : 
 			[
 				1,
-				7
+				6
 			]
 		}
 	],
@@ -513,13 +511,7 @@
 		},
 		{
 			"backtrace" : 1,
-			"compileGroupIndex" : 0,
-			"path" : "List.cpp",
-			"sourceGroupIndex" : 0
-		},
-		{
-			"backtrace" : 1,
-			"path" : "List.h",
+			"path" : "mylist.h",
 			"sourceGroupIndex" : 1
 		}
 	],

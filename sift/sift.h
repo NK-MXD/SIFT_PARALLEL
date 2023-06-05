@@ -23,6 +23,13 @@ const int SIFT_DESCR_HIST_BINS = 8;              //每个网格中直方图角�
 const float SIFT_DESCR_MAG_THR = 0.2f;           //描述子幅度阈值
 const float SIFT_DESCR_SCL_FCTR = 3.0f;          //计算描述子时，每个网格的大小因子
 
+typedef struct {
+    int r;
+    int c;
+    int octave;
+    int layer;
+} LocalExtrema;
+
 class Sift
 {
 protected:
@@ -101,14 +108,6 @@ public:
     //计算特征点的描述子
     void compute(const std::vector<std::vector<cv::Mat>> &gpyr, const std::vector<cv::KeyPoint> &kpts, cv::Mat &desc) const;
 
-
-    typedef struct
-    {
-        int r;
-        int c;
-        int octave;
-        int layer;
-    } LocalExtrema;
     void find_local_extrema(const std::vector<std::vector<cv::Mat>> &dogpyr, std::vector<LocalExtrema> &extrema) const;
 
     void adjust(const std::vector<std::vector<cv::Mat>> &dogpyr, const std::vector<LocalExtrema> &extrema, std::vector<cv::KeyPoint> &kpts, std::vector<LocalExtrema> &extrema_adjust) const;
