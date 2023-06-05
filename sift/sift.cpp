@@ -631,7 +631,7 @@ void SiftOmp::build_gaussian_pyramid(const cv::Mat &init_img, std::vector<std::v
     sig[0] = sigma;
     double k = pow(2.0, 1.0 / nOctaveLayers);
 
-#pragma omp parallel for num_threads(nthreads) schedule(static) default(none) shared(nLayers, k, sigma, sig)
+#pragma omp parallel for num_threads(nthreads) schedule(static) default(none) shared(k, sig)
     for (int i = 1; i < nLayers; i++) {
         double prev = pow(k, double(i - 1)) * sigma;
         double curr = k * prev;
@@ -837,7 +837,7 @@ void SiftOmp::find_local_extrema(const std::vector<std::vector<cv::Mat>> &dogpyr
     float threshold = (float)(contrastThreshold / nOctaveLayers);
     int nOctaves = dogpyr.size();
     std::vector<std::vector<LocalExtrema>> threads_extrema(nthreads);
-#pragma omp parallel default(none) shared(nOctaves, nOctaveLayers, dogpyr, threshold, threads_extrema)
+#pragma omp parallel default(none) shared(nOctaves, dogpyr, threshold, threads_extrema)
     for (int i = 0; i < nOctaves; ++i)//对于每一组
     {
         for (int j = 1; j <= nOctaveLayers; ++j)//对于组内每一层
@@ -1059,7 +1059,7 @@ SiftOmp::calc_orientation(const std::vector<std::vector<cv::Mat>> &gpyr, const s
     int nKpts = kpts.size();
     int n = SIFT_ORI_HIST_BINS;
     std::vector<std::vector<cv::KeyPoint>> threads_kpts(nthreads);
-#pragma omp parallel for num_threads(nthreads) schedule(dynamic) default(none) shared(nKpts, kpts, extrema, gpyr, threads_kpts, n, SIFT_ORI_PEAK_RATIO)
+#pragma omp parallel for num_threads(nthreads) schedule(dynamic) default(none) shared(nKpts, kpts, extrema, gpyr, threads_kpts, n)
     for (int j = 0; j < nKpts; j++) {
         const LocalExtrema &e = extrema[j];
         cv::KeyPoint kpt = kpts[j];
@@ -1383,7 +1383,7 @@ void SiftOpencvPara::find_local_extrema(const std::vector<std::vector<cv::Mat>> 
                                     .layer = j
                             };
                             int thread_id = cv::getThreadNum();
-                            std::cout << thread_id << std::endl;
+                            // std::cout << thread_id << std::endl;
 //                            extrema_list[thread_id].push_back(e);
                         }
                     }
