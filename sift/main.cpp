@@ -3,7 +3,7 @@ extern void test_omp();
 
 int main(int argc, char *argv[])
 {
-//    test_match();
-    test_omp();
+   test_match();
+    // test_omp();
     return 0;
 }

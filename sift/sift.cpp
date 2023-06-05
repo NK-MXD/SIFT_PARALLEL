@@ -587,19 +587,33 @@ void Sift::detect(const cv::Mat &image, std::vector<std::vector<cv::Mat>> &gpyr,
 
 	//计算高斯金字塔组数
 	int nOctaves = num_octaves(image);
+    //计时
+    double counttime = 0;
 
 	//生成高斯金字塔第一层图像
 	cv::Mat init_gauss;
+    counttime = (double)cv::getTickCount();
 	create_init_img(image, init_gauss);
+    counttime = ((double)cv::getTickCount() - counttime) / cv::getTickFrequency();
+    std::cout << "create_init_img 算法执行时间： " << counttime << "s" << std::endl;
 
 	//生成高斯尺度空间图像
+    counttime = (double)cv::getTickCount();
 	build_gaussian_pyramid(init_gauss, gpyr, nOctaves);
+    counttime = ((double)cv::getTickCount() - counttime) / cv::getTickFrequency();
+    std::cout << "build_gaussian_pyramid 算法执行时间： " << counttime << "s" << std::endl;
 
 	//生成高斯差分金字塔(DOG金字塔，or LOG金字塔)
+    counttime = (double)cv::getTickCount();
 	build_dog_pyramid(dogpyr, gpyr);
+    counttime = ((double)cv::getTickCount() - counttime) / cv::getTickFrequency();
+    std::cout << "build_dog_pyramid 算法执行时间： " << counttime << "s" << std::endl;
 
 	//在DOG金字塔上检测特征点
+    counttime = (double)cv::getTickCount();
 	find_scale_space_extrema(dogpyr, gpyr, kpts);
+    counttime = ((double)cv::getTickCount() - counttime) / cv::getTickFrequency();
+    std::cout << "find_scale_space_extrema 算法执行时间： " << counttime << "s" << std::endl;
 
 	if (nfeatures != 0 && nfeatures < (int)kpts.size())
 	{
@@ -628,7 +642,7 @@ void SiftMultithreading::build_gaussian_pyramid(const cv::Mat &init_img, std::ve
     sig[0] = sigma;
     double k = pow(2.0, 1.0 / nOctaveLayers);
 
-#pragma omp parallel for num_threads(omp_get_num_procs()) schedule(static) default(none) shared(nLayers, k, sigma, sig)
+#pragma omp parallel for num_threads(omp_get_num_procs()) schedule(static) default(none) shared(k, sig)
     for (int i = 1; i < nLayers; i++) {
         double prev = pow(k, double(i - 1)) * sigma;
         double curr = k * prev;
