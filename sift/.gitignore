@@ -1,5 +1,5 @@
-cmake-build-debug/
-note.md
+.idea/
+.vscode/
 build/
 cmake-build-release/
-.idea/
+cmake-build-debug/

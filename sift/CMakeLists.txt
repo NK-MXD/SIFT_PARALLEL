@@ -2,14 +2,12 @@ cmake_minimum_required(VERSION 3.25)
 project(sift)
 
 set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_EXPORT_COMPILE_COMMANDS 1)
-#set(CMAKE_BUILD_TYPE "Release")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -O2 -march=native -mavx -mavx2 -fopenmp")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -march=native -mavx -mavx2 -fopenmp")
 
 # Note: manually set `OpenCV_DIR` in Windows environment
 # At directory `build`, run `cmake -DCMAKE_MAKE_PROGRAM="C:/Program Files/JetBrains/CLion 2023.1.3/bin/ninja/win/x64/ninja.exe" -G Ninja -S ..`,
 # then run `cmake build .` to build the executable file
-set(OpenCV_DIR C:/opencv/build/)
+#set(OpenCV_DIR C:/opencv/build/)
 find_package(OpenCV REQUIRED)
 
 find_package(OpenMP)
@@ -21,6 +19,6 @@ endif()
 
 include_directories(${OpenCV_INCLUDE_DIRS})
 
-add_executable(sift main.cpp util.h image.h)
+add_executable(sift main.cpp sift.h sift.cpp demo/test_match.cpp demo/test_omp.cpp)
 
 target_link_libraries(sift ${OpenCV_LIBS})
