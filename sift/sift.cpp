@@ -7,9 +7,9 @@
 #include <opencv2/core/base.hpp>
 #include <opencv2/imgproc/imgproc.hpp>
 #include <opencv2/core/hal/hal.hpp>
+#include <immintrin.h>
 
 #include "sift.h"
-#include "mylist.h"
 
 int Sift::num_octaves(const cv::Mat &img) const 
 {
@@ -96,7 +96,7 @@ float Sift::calc_orientation_hist(const cv::Mat &image, cv::Point pt, float scal
 {
 	int radius = cvRound(SIFT_ORI_RADIUS * scale);  //特征点邻域半径(3*1.5*scale)
 	int len = (2 * radius + 1) * (2 * radius + 1);       //特征点邻域像素总个数（最大值）
-	float sigma = SIFT_ORI_RADIUS*scale;                 //特征点邻域高斯权重标准差(1.5*scale)
+	float sigma = SIFT_ORI_SIG_FCTR*scale;                 //特征点邻域高斯权重标准差(1.5*scale)
 	float exp_scale = -1.f / (2 * sigma * sigma);
 	cv::AutoBuffer<float> buffer(5 * len + n + 4);  //使用AutoBuffer分配一段内存，这里多出4个空间的目的是为了方便后面平滑直方图的需要
 	float *X = buffer, *Y = X + len, *Mag = Y + len, *Ori = Mag + len, *W = Ori + len;  	//X保存水平差分，Y保存数值差分，Mag保存梯度幅度，Ori保存梯度角度，W保存高斯权重
@@ -673,7 +673,7 @@ float
 SiftOmp::calc_orientation_hist(const cv::Mat &image, cv::Point pt, float scale, int n, float *hist) const {
     int radius = cvRound(SIFT_ORI_RADIUS * scale);  //特征点邻域半径(3*1.5*scale)
 	int len = (2 * radius + 1) * (2 * radius + 1);       //特征点邻域像素总个数（最大值）
-	float sigma = SIFT_ORI_RADIUS*scale;                 //特征点邻域高斯权重标准差(1.5*scale)
+	float sigma = SIFT_ORI_SIG_FCTR*scale;                 //特征点邻域高斯权重标准差(1.5*scale)
 	float exp_scale = -1.f / (2 * sigma * sigma);
 	cv::AutoBuffer<float> buffer(5 * len + n + 4);  //使用AutoBuffer分配一段内存，这里多出4个空间的目的是为了方便后面平滑直方图的需要
 	float *X = buffer, *Y = X + len, *Mag = Y + len, *Ori = Mag + len, *W = Ori + len;  	//X保存水平差分，Y保存数值差分，Mag保存梯度幅度，Ori保存梯度角度，W保存高斯权重
@@ -758,22 +758,35 @@ void SiftOmp::detect(const cv::Mat &image, std::vector<std::vector<cv::Mat>> &gp
                      std::vector<std::vector<cv::Mat>> &dogpyr, std::vector<cv::KeyPoint> &kpts) const {
     if (image.empty() || image.depth() != CV_8U)
 		CV_Error(cv::Error::StsBadArg,"输入图像为空，或者图像深度不是CV_8U");
+    double t = 0;
 
 	//计算高斯金字塔组数
 	int nOctaves = num_octaves(image);
 
 	//生成高斯金字塔第一层图像
 	cv::Mat init_gauss;
+    t = (double)cv::getTickCount();
 	create_init_img(image, init_gauss);
+    t = ((double)cv::getTickCount() - t) / cv::getTickFrequency();
+    std::cout << "omp create_init_img algorithm time: " << t << std::endl;
 
 	//生成高斯尺度空间图像
+    t = (double)cv::getTickCount();
 	build_gaussian_pyramid(init_gauss, gpyr, nOctaves);
+    t = ((double)cv::getTickCount() - t) / cv::getTickFrequency();
+    std::cout << "omp build_gaussian_pyramid algorithm time: " << t << std::endl;
 
 	//生成高斯差分金字塔(DOG金字塔，or LOG金字塔)
+    t = (double)cv::getTickCount();
 	build_dog_pyramid(dogpyr, gpyr);
+    t = ((double)cv::getTickCount() - t) / cv::getTickFrequency();
+    std::cout << "omp build_dog_pyramid algorithm time: " << t << std::endl;
 
 	//在DOG金字塔上检测特征点
+    t = (double)cv::getTickCount();
 	find_scale_space_extrema(dogpyr, gpyr, kpts);
+    t = ((double)cv::getTickCount() - t) / cv::getTickFrequency();
+    std::cout << "omp find_scale_space_extrema algorithm time: " << t << std::endl;
 
 	if (nfeatures != 0 && nfeatures < (int)kpts.size())
 	{
@@ -837,7 +850,7 @@ void SiftOmp::find_local_extrema(const std::vector<std::vector<cv::Mat>> &dogpyr
     float threshold = (float)(contrastThreshold / nOctaveLayers);
     int nOctaves = dogpyr.size();
     std::vector<std::vector<LocalExtrema>> threads_extrema(nthreads);
-#pragma omp parallel default(none) shared(nOctaves, dogpyr, threshold, threads_extrema)
+#pragma omp parallel num_threads(nthreads) default(none) shared(nOctaves, dogpyr, threshold, threads_extrema, std::cout)
     for (int i = 0; i < nOctaves; ++i)//对于每一组
     {
         for (int j = 1; j <= nOctaveLayers; ++j)//对于组内每一层
@@ -894,13 +907,15 @@ void SiftOmp::find_local_extrema(const std::vector<std::vector<cv::Mat>> &dogpyr
                                     val <= next_ptr[c + step - 1] && val <= next_ptr[c + step] &&
                                     val <= next_ptr[c + step + 1])));
                     if (is_extrema) {
-                        threads_extrema[omp_get_thread_num()].emplace_back(
-                                LocalExtrema{
+                        {
+                            LocalExtrema le{
                                     .r = r,
                                     .c = c,
                                     .octave = i,
                                     .layer = j
-                                });
+                            };
+                            threads_extrema[omp_get_thread_num()].emplace_back(le);
+                        }
                     }
                 }
             }
@@ -922,7 +937,7 @@ SiftOmp::adjust(const std::vector<std::vector<cv::Mat>> &dogpyr, const std::vect
     int nExtrema = extrema.size();
     std::vector<std::vector<cv::KeyPoint>> threads_kpts(nthreads);
     std::vector<std::vector<LocalExtrema>> threads_extrema_adjust(nthreads);
-#pragma omp parallel for schedule(dynamic) default(none) shared(nExtrema, extrema, dogpyr, threads_kpts, threads_extrema_adjust)
+#pragma omp parallel for num_threads(nthreads) schedule(dynamic) default(none) shared(nExtrema, extrema, dogpyr, threads_kpts, threads_extrema_adjust)
     for (int j = 0; j < nExtrema; j++) {
         int thread_id = omp_get_thread_num();
         const LocalExtrema &e = extrema[j];
@@ -1098,64 +1113,178 @@ SiftOmp::calc_orientation(const std::vector<std::vector<cv::Mat>> &gpyr, const s
     }
 }
 
-void SiftOpencvPara::build_gaussian_pyramid(const cv::Mat &init_img, std::vector<std::vector<cv::Mat>> &gpyr,
-                                     int nOctaves) const {
-    const int nLayers = nOctaveLayers + 3;
-    std::vector<double> sig(nLayers);
-    gpyr.resize(nOctaves);
-    for (int i = 0; i < nOctaves; i++)
-        gpyr[i].resize(nLayers);
+void SiftSIMD::detect(const cv::Mat &image, std::vector<std::vector<cv::Mat>> &gpyr, std::vector<std::vector<cv::Mat>> &dogpyr,
+                  std::vector<cv::KeyPoint> &kpts) const
+{
+	if (image.empty() || image.depth() != CV_8U)
+		CV_Error(cv::Error::StsBadArg,"输入图像为空，或者图像深度不是CV_8U");
 
-    sig[0] = sigma;
-    double k = pow(2.0, 1.0 / nOctaveLayers);
+	//计算高斯金字塔组数
+	int nOctaves = num_octaves(image);
+    //计时
+    double counttime = 0;
 
-    cv::parallel_for_(cv::Range(1, nLayers), [&](const cv::Range &range) {
-        for (int i = range.start; i < range.end; i++) {
-            double prev = pow(k, double(i - 1)) * sigma;
-            double curr = k * prev;
-            sig[i] = sqrt(curr * curr - prev * prev);
-        }
-    });
+	//生成高斯金字塔第一层图像
+	cv::Mat init_gauss;
+    counttime = (double)cv::getTickCount();
+	create_init_img(image, init_gauss);
+    counttime = ((double)cv::getTickCount() - counttime) / cv::getTickFrequency();
+    std::cout << "simd create_init_img algorithm time: " << counttime << "s" << std::endl;
 
-    // 该层循环存在数据依赖问题，并行需要进一步研究，可否采用直接求不相邻高斯图像的方法？
-    // TODO
-    for (int i = 0; i < nOctaves; i++) {
-        for (int j = 0; j < nLayers; j++) {
-            if (i == 0 && j == 0) {
-                gpyr[0][0] = init_img;
-            } else if (j == 0) {
-                cv::Mat &prev = gpyr[i - 1][nOctaveLayers];
-                cv::resize(prev, gpyr[i][0], cv::Size(prev.cols >> 1, prev.rows >> 1), 0, 0, cv::INTER_NEAREST);
-            } else {
-                int ksize = 2 * cvRound(SIFT_GAUSS_KERNEL_RATIO * sig[j]) + 1;
-                cv::GaussianBlur(gpyr[i][j - 1], gpyr[i][j], cv::Size(ksize, ksize), sig[j], sig[j]);
-            }
-        }
+	//生成高斯尺度空间图像
+    counttime = (double)cv::getTickCount();
+	build_gaussian_pyramid(init_gauss, gpyr, nOctaves);
+    counttime = ((double)cv::getTickCount() - counttime) / cv::getTickFrequency();
+    std::cout << "simd build_gaussian_pyramid algorithm time:  " << counttime << "s" << std::endl;
+
+	//生成高斯差分金字塔(DOG金字塔，or LOG金字塔)
+    counttime = (double)cv::getTickCount();
+	build_dog_pyramid(dogpyr, gpyr);
+    counttime = ((double)cv::getTickCount() - counttime) / cv::getTickFrequency();
+    std::cout << "simd build_dog_pyramid algorithm time: " << counttime << "s" << std::endl;
+
+	//在DOG金字塔上检测特征点
+    counttime = (double)cv::getTickCount();
+	find_scale_space_extrema(dogpyr, gpyr, kpts);
+    counttime = ((double)cv::getTickCount() - counttime) / cv::getTickFrequency();
+    std::cout << "simd find_scale_space_extrema algorithm time: " << counttime << "s" << std::endl;
+
+	if (nfeatures != 0 && nfeatures < (int)kpts.size())
+	{
+		sort(kpts.begin(), kpts.end(), [](const cv::KeyPoint &a, const cv::KeyPoint &b)
+		{
+            return a.response>b.response;
+        });
+		kpts.erase(kpts.begin() + nfeatures, kpts.end());
+	}
+    if (kpts.size() == 0)
+        std::cout << "No keypoints are detected!" << std::endl;
+
+    for (auto &kpt : kpts) {        // 重新调整特征点的坐标，若初始图像经过上采样，则特征点坐标是相对于上采样图像的，因此调整回相对于原图像
+        kpt.pt /= 2.f;
     }
 }
 
-void SiftOpencvPara::build_dog_pyramid(std::vector<std::vector<cv::Mat>> &dogpyr,
-                                const std::vector<std::vector<cv::Mat>> &gpyr) const {
-    int nOctaves = gpyr.size();
-    int nLayers = nOctaveLayers + 2;
-    dogpyr.resize(nOctaves);
-    for (int i = 0; i < nOctaves; ++i)
-        dogpyr[i].resize(nLayers);
 
-    cv::parallel_for_(cv::Range(0, nOctaves), [&](const cv::Range &range) {
-        for (int i = range.start; i < range.end; i++) {
-            for (int j = 0; j < nLayers; j++) {
-                cv::subtract(gpyr[i][j + 1], gpyr[i][j], dogpyr[i][j], cv::noArray(), CV_32FC1);
-            }
-        }
-    });
+void SiftSIMD::find_scale_space_extrema(const std::vector<std::vector<cv::Mat>> &dogpyr, const std::vector<std::vector<cv::Mat>> &gpyr,
+                                    std::vector<cv::KeyPoint> &kpts) const
+{
+    kpts.clear();
+	int nOctaves = (int)dogpyr.size();
+	float threshold = (float)(contrastThreshold / nOctaveLayers);   //Low文章建议threshold是0.03，Rob Hess等人使用0.04/nOctaveLayers作为阈值
+	const int n = SIFT_ORI_HIST_BINS;   //n=36
+	float hist[n];
+	cv::KeyPoint kpt;
+
+    int extrema_adjust_cnt = 0;
+
+	for (int i = 0; i < nOctaves; ++i)//对于每一组
+	{
+		for (int j = 1; j <= nOctaveLayers; ++j)//对于组内每一层
+		{
+			const cv::Mat &curr_img = dogpyr[i][j];//当前层
+			const cv::Mat &prev_img = dogpyr[i][j - 1];//之前层
+			const cv::Mat &next_img = dogpyr[i][j + 1];
+			int num_row = curr_img.rows;
+			int num_col = curr_img.cols;//获得当前组图像的大小
+			size_t step = curr_img.step1();//一行元素所占宽度
+
+            for (int r = SIFT_IMG_BORDER; r < num_row - SIFT_IMG_BORDER; ++r)
+            {
+                const float* curr_ptr = curr_img.ptr<float>(r);
+                const float* prev_ptr = prev_img.ptr<float>(r);
+                const float* next_ptr = next_img.ptr<float>(r);
+
+                for (int c = SIFT_IMG_BORDER; c < num_col - SIFT_IMG_BORDER; ++c)
+                {
+                    float val = curr_ptr[c];
+					bool is_extrema = false;
+					// SIMD求得所有元素的最大值, 然后进行计算
+                    // 第一层元素存放:
+                    // 4X8 32个元素, 将32个元素存放到向量中进行比较(256)
+                    
+                    __m256 val_vec = _mm256_set1_ps(val);
+                    __m256 elements1 = _mm256_set_ps(curr_ptr[c - 1], curr_ptr[c + 1], curr_ptr[c - step - 1], curr_ptr[c - step],
+                                        curr_ptr[c - step + 1], curr_ptr[c + step - 1], curr_ptr[c + step], curr_ptr[c + step + 1]);
+                    __m256 elements2 = _mm256_set_ps(prev_ptr[c], prev_ptr[c - 1], prev_ptr[c + 1], prev_ptr[c - step - 1],
+                                        prev_ptr[c - step], prev_ptr[c - step + 1], prev_ptr[c + step - 1], prev_ptr[c + step]);
+                    __m256 elements3 = _mm256_set_ps(prev_ptr[c + step + 1], next_ptr[c], next_ptr[c - 1], next_ptr[c + 1],
+                                        next_ptr[c - step - 1], next_ptr[c - step], next_ptr[c - step + 1], next_ptr[c + step - 1]);
+                    __m256 elements4 = _mm256_set_ps(next_ptr[c + step], next_ptr[c + step + 1], threshold, threshold, threshold, threshold, threshold, threshold);
+                    __m256 elements5 = _mm256_set_ps(next_ptr[c + step], next_ptr[c + step + 1], -threshold, -threshold, -threshold, -threshold, -threshold, -threshold);
+                    // 然后进行两两比较
+                    __m256 max_values1 = _mm256_max_ps(elements1, elements2);
+                    __m256 max_values2 = _mm256_max_ps(elements3, elements4);
+                    __m256 max_values3 = _mm256_max_ps(max_values1, max_values2);
+                    __m256 max_result = _mm256_max_ps(val_vec, max_values3);
+                    __m256 min_values1 = _mm256_min_ps(elements1, elements2);
+                    __m256 min_values2 = _mm256_min_ps(elements3, elements5);
+                    __m256 min_values3 = _mm256_min_ps(min_values1, min_values2);
+                    __m256 min_result = _mm256_min_ps(val_vec, min_values3);
+                    // 比较最后的结果是否全部为val
+                    __m256 max_res = _mm256_cmp_ps(val_vec, max_result, _CMP_EQ_OQ);
+                    __m256 min_res = _mm256_cmp_ps(val_vec, min_result, _CMP_EQ_OQ);
+                    // 使用_mm256_movemask_ps将比较结果向量的符号位提取到一个整数中
+                    int max_mask = _mm256_movemask_ps(max_res);
+                    int min_mask = _mm256_movemask_ps(min_res);
+                    // 检查提取的掩码是否等于预期值（0xFF），以确定所有元素是否相等
+					is_extrema = (max_mask == 0xFF || min_mask == 0xFF);
+                    if (is_extrema) {
+						//++numKeys;
+						//获得特征点初始行号，列号，组号，组内层号
+						int r1 = r, c1 = c, octave = i, layer = j;
+                        // DEBUG
+//                        extrema_cnt++;
+						if (!adjust_local_extrema(dogpyr, kpt, octave, layer, r1, c1,
+                                                  nOctaveLayers, (float)contrastThreshold,
+                                                  (float)edgeThreshold, (float)sigma))
+						{
+							continue;//如果该初始点不满足条件，则不保存改点
+						}
+                        extrema_adjust_cnt++;
+
+						float scale = kpt.size / float (1 << octave);//该特征点相对于本组的尺度
+						float max_hist = calc_orientation_hist(gpyr[octave][layer],
+                                                               cv::Point(c1, r1), scale, n, hist);
+						float mag_thr = max_hist * SIFT_ORI_PEAK_RATIO;
+
+						for (int i = 0; i < n; ++i)
+						{
+							int left=0, right=0;
+							if (i == 0)
+								left = n - 1;
+							else
+								left = i - 1;
+
+							if (i == n - 1)
+								right = 0;
+							else
+								right = i + 1;
+
+							if (hist[i] > hist[left] && hist[i] > hist[right] && hist[i] >= mag_thr)
+							{
+								float bin = i + 0.5f*(hist[left] - hist[right]) / (hist[left] + hist[right] - 2 * hist[i]);
+								if (bin < 0)
+									bin = bin + n;
+								if (bin >= n)
+									bin = bin - n;
+
+								kpt.angle = (360.f / n)*bin;//特征点的主方向0-360度
+								kpts.push_back(kpt);//保存该特征点
+							}
+						}
+					}
+				}
+			}
+		}
+	}
 }
 
-float
-SiftOpencvPara::calc_orientation_hist(const cv::Mat &image, cv::Point pt, float scale, int n, float *hist) const {
-    int radius = cvRound(SIFT_ORI_RADIUS * scale);  //特征点邻域半径(3*1.5*scale)
+float SiftSIMD::calc_orientation_hist(const cv::Mat &image, cv::Point pt, float scale, int n, float *hist) const
+{
+	int radius = cvRound(SIFT_ORI_RADIUS * scale);  //特征点邻域半径(3*1.5*scale)
 	int len = (2 * radius + 1) * (2 * radius + 1);       //特征点邻域像素总个数（最大值）
-	float sigma = SIFT_ORI_RADIUS*scale;                 //特征点邻域高斯权重标准差(1.5*scale)
+	float sigma = SIFT_ORI_SIG_FCTR*scale;                 //特征点邻域高斯权重标准差(1.5*scale)
 	float exp_scale = -1.f / (2 * sigma * sigma);
 	cv::AutoBuffer<float> buffer(5 * len + n + 4);  //使用AutoBuffer分配一段内存，这里多出4个空间的目的是为了方便后面平滑直方图的需要
 	float *X = buffer, *Y = X + len, *Mag = Y + len, *Ori = Mag + len, *W = Ori + len;  	//X保存水平差分，Y保存数值差分，Mag保存梯度幅度，Ori保存梯度角度，W保存高斯权重
@@ -1191,14 +1320,52 @@ SiftOpencvPara::calc_orientation_hist(const cv::Mat &image, cv::Point pt, float 
     cv::hal::fastAtan2(Y, X, Ori, len, true);
     cv::hal::magnitude32f(X, Y, Mag, len);
 
-    // 计算直方图
-    for (int i = 0; i < len; i++) {
-        int bin = cvRound((n / 360.f) * Ori[i]);    //bin的范围约束在[0,(n-1)]
-        if (bin >= n)
-            bin -= n;
-        if (bin < 0)
-            bin += n;
-        temp_hist[bin] += Mag[i] * W[i];
+    // 这里进行SIMD向量化
+    int vecsize = 8;
+    __m256 n_div_360 = _mm256_set1_ps(n / 360.f);
+    __m256i n_vec = _mm256_set1_epi32(n);
+    __m256i zero_1_vec = _mm256_set1_epi32(-1);
+    __m256i n_1_vec = _mm256_set1_epi32(n - 1);
+
+    // 注意: 这里len
+    for (int i = 0; i < len; i += vecsize) {
+        // 将数据全部放入向量当中
+        __m256 Ori_vec = _mm256_loadu_ps(&Ori[i]);
+        __m256 Mag_vec = _mm256_loadu_ps(&Mag[i]);
+        __m256 W_vec = _mm256_loadu_ps(&W[i]);
+
+        // 计算bin的值
+        __m256 bin_vec = _mm256_mul_ps(Ori_vec, n_div_360);
+        // 类型转换为int
+        __m256i bin_int_vec = _mm256_cvtps_epi32(bin_vec);
+
+        // 判断是否 > n - 1
+        __m256i ge_n_mask = _mm256_cmpgt_epi32(bin_int_vec, n_1_vec);
+        // 位判断为1大于 n - 1 的就减去
+        bin_int_vec = _mm256_sub_epi32(bin_int_vec, _mm256_and_si256(ge_n_mask, n_vec));
+
+        // 判断是否 > -1
+        __m256i lt_n_mask = _mm256_cmpgt_epi32(bin_int_vec, zero_1_vec);
+        // 位判断为 <= -1 就加上 n
+        bin_int_vec = _mm256_add_epi32(bin_int_vec, _mm256_andnot_si256(lt_n_mask, n_vec));  // dst[255:0] := ((NOT a[255:0]) AND b[255:0])
+
+        __m256 hist_update = _mm256_mul_ps(Mag_vec, W_vec);
+        __m128i bin_int_vec_low = _mm256_extractf128_si256(bin_int_vec, 0);
+        __m128i bin_int_vec_high = _mm256_extractf128_si256(bin_int_vec, 1);
+        __m128 hist_update_low = _mm256_extractf128_ps(hist_update, 0);
+        __m128 hist_update_high = _mm256_extractf128_ps(hist_update, 1);
+
+        int temp_bins[8];
+        _mm_storeu_si128((__m128i*)temp_bins, bin_int_vec_low);
+        _mm_storeu_si128((__m128i*)(temp_bins + 4), bin_int_vec_high);
+
+        float temp_hist_updates[8];
+        _mm_storeu_ps(temp_hist_updates, hist_update_low);
+        _mm_storeu_ps(temp_hist_updates + 4, hist_update_high);
+        for (int j = 0; j < vecsize && i + j < len; ++j) {
+            int bin = temp_bins[j];
+            temp_hist[bin] += temp_hist_updates[j];
+        }
     }
 
     //平滑直方图
@@ -1210,15 +1377,205 @@ SiftOpencvPara::calc_orientation_hist(const cv::Mat &image, cv::Point pt, float 
         hist[i] = (temp_hist[i - 2] + temp_hist[i + 2]) * 0.0625f +
                   (temp_hist[i - 1] + temp_hist[i + 1]) * 0.25f +
                   temp_hist[i] * 0.375f;
-    float max_value = hist[0];
-    for (int i = 1; i < n; ++i)
-        if (hist[i] > max_value)
-            max_value = hist[i];
+
+    int avx_iters = n - n % 8;
+    __m256 max_value_avx = _mm256_set1_ps(hist[0]);
+    int iter;
+    for (iter = 0; iter < avx_iters; iter += 8)
+    {
+        __m256 hist_avx = _mm256_loadu_ps(&hist[iter]);
+        max_value_avx = _mm256_max_ps(max_value_avx, hist_avx);
+    }
+    float max_value_array[8];
+    _mm256_storeu_ps(max_value_array, max_value_avx);
+
+    float max_value = max_value_array[0];
+    for (int i = 1; i < 8; ++i)
+    {
+        max_value = std::max(max_value, max_value_array[i]);
+    }
+    for (; iter < n; iter++) {
+        max_value = std::max(max_value, hist[iter]);
+    }
 
     return max_value;
 }
 
-void SiftOpencvPara::find_scale_space_extrema(const std::vector<std::vector<cv::Mat>> &dogpyr,
+
+void SiftOmpandSIMD::build_gaussian_pyramid(const cv::Mat &init_img, std::vector<std::vector<cv::Mat>> &gpyr,
+                                     int nOctaves) const {
+    const int nLayers = nOctaveLayers + 3;
+    std::vector<double> sig(nLayers);
+    gpyr.resize(nOctaves);
+    for (int i = 0; i < nOctaves; i++)
+        gpyr[i].resize(nLayers);
+
+    sig[0] = sigma;
+    double k = pow(2.0, 1.0 / nOctaveLayers);
+
+#pragma omp parallel for num_threads(nthreads) schedule(static) default(none) shared(k, sig)
+    for (int i = 1; i < nLayers; i++) {
+        double prev = pow(k, double(i - 1)) * sigma;
+        double curr = k * prev;
+        sig[i] = sqrt(curr * curr - prev * prev);
+    }
+
+    // 该层循环存在数据依赖问题，并行需要进一步研究，可否采用直接求不相邻高斯图像的方法？
+    // TODO
+    for (int i = 0; i < nOctaves; i++) {
+        for (int j = 0; j < nLayers; j++) {
+            if (i == 0 && j == 0) {
+                gpyr[0][0] = init_img;
+            } else if (j == 0) {
+                cv::Mat &prev = gpyr[i - 1][nOctaveLayers];
+                cv::resize(prev, gpyr[i][0], cv::Size(prev.cols >> 1, prev.rows >> 1), 0, 0, cv::INTER_NEAREST);
+            } else {
+                int ksize = 2 * cvRound(SIFT_GAUSS_KERNEL_RATIO * sig[j]) + 1;
+                cv::GaussianBlur(gpyr[i][j - 1], gpyr[i][j], cv::Size(ksize, ksize), sig[j], sig[j]);
+            }
+        }
+    }
+}
+
+void SiftOmpandSIMD::build_dog_pyramid(std::vector<std::vector<cv::Mat>> &dogpyr,
+                                const std::vector<std::vector<cv::Mat>> &gpyr) const {
+    int nOctaves = gpyr.size();
+    int nLayers = nOctaveLayers + 2;
+    dogpyr.resize(nOctaves);
+    for (int i = 0; i < nOctaves; ++i)
+        dogpyr[i].resize(nLayers);
+
+#pragma omp parallel for num_threads(nthreads) schedule(dynamic) default(none) shared(nOctaves, nLayers, gpyr, dogpyr)
+	for (int i = 0; i < nOctaves; i++)
+		for (int j = 0; j < nLayers; j++)
+             cv::subtract(gpyr[i][j + 1], gpyr[i][j], dogpyr[i][j], cv::noArray(), CV_32FC1);
+}
+
+float
+SiftOmpandSIMD::calc_orientation_hist(const cv::Mat &image, cv::Point pt, float scale, int n, float *hist) const {
+    int radius = cvRound(SIFT_ORI_RADIUS * scale);  //特征点邻域半径(3*1.5*scale)
+	int len = (2 * radius + 1) * (2 * radius + 1);       //特征点邻域像素总个数（最大值）
+	float sigma = SIFT_ORI_SIG_FCTR*scale;                 //特征点邻域高斯权重标准差(1.5*scale)
+	float exp_scale = -1.f / (2 * sigma * sigma);
+	cv::AutoBuffer<float> buffer(5 * len + n + 4);  //使用AutoBuffer分配一段内存，这里多出4个空间的目的是为了方便后面平滑直方图的需要
+	float *X = buffer, *Y = X + len, *Mag = Y + len, *Ori = Mag + len, *W = Ori + len;  	//X保存水平差分，Y保存数值差分，Mag保存梯度幅度，Ori保存梯度角度，W保存高斯权重
+	float *temp_hist = W + len + 2;                     //临时保存直方图数据
+	for (int i = 0; i < n; i++)
+		temp_hist[i] = 0.f;//数据清零
+
+    //计算邻域像素的水平差分和竖直差分
+    int k = 0;  // local counter for points within radius
+    int x, y;
+    float dx, dy;
+    for (int i = -radius; i <= radius; ++i)
+    {
+        y = pt.y + i;
+        if (y <= 0 || y >= image.rows - 1)
+            continue;
+        for (int j = -radius; j < radius; ++j) {
+            x = pt.x + j;
+            if (x <= 0 || x >= image.cols - 1)
+                continue;
+            dx = image.at<float>(y, x + 1) - image.at<float>(y, x - 1);
+            dy = image.at<float>(y + 1, x) - image.at<float>(y - 1, x);
+            X[k] = dx;
+            Y[k] = dy;
+            W[k] = (i * i + j * j) * exp_scale;
+            ++k;
+        }
+    }
+
+    //计算邻域像素的梯度幅度,梯度方向，高斯权重
+    len = k;
+    cv::hal::exp32f(W, W, len);
+    cv::hal::fastAtan2(Y, X, Ori, len, true);
+    cv::hal::magnitude32f(X, Y, Mag, len);
+
+    // 这里进行SIMD向量化
+    int vecsize = 8;
+    __m256 n_div_360 = _mm256_set1_ps(n / 360.f);
+    __m256i n_vec = _mm256_set1_epi32(n);
+    __m256i zero_1_vec = _mm256_set1_epi32(-1);
+    __m256i n_1_vec = _mm256_set1_epi32(n - 1);
+
+    // 注意: 这里len
+    for (int i = 0; i < len; i += vecsize) {
+        // 将数据全部放入向量当中
+        __m256 Ori_vec = _mm256_loadu_ps(&Ori[i]);
+        __m256 Mag_vec = _mm256_loadu_ps(&Mag[i]);
+        __m256 W_vec = _mm256_loadu_ps(&W[i]);
+
+        // 计算bin的值
+        __m256 bin_vec = _mm256_mul_ps(Ori_vec, n_div_360);
+        // 类型转换为int
+        __m256i bin_int_vec = _mm256_cvtps_epi32(bin_vec);
+
+        // 判断是否 > n - 1
+        __m256i ge_n_mask = _mm256_cmpgt_epi32(bin_int_vec, n_1_vec);
+        // 位判断为1大于 n - 1 的就减去
+        bin_int_vec = _mm256_sub_epi32(bin_int_vec, _mm256_and_si256(ge_n_mask, n_vec));
+
+        // 判断是否 > -1
+        __m256i lt_n_mask = _mm256_cmpgt_epi32(bin_int_vec, zero_1_vec);
+        // 位判断为 <= -1 就加上 n
+        bin_int_vec = _mm256_add_epi32(bin_int_vec, _mm256_andnot_si256(lt_n_mask, n_vec));  // dst[255:0] := ((NOT a[255:0]) AND b[255:0])
+
+        __m256 hist_update = _mm256_mul_ps(Mag_vec, W_vec);
+        __m128i bin_int_vec_low = _mm256_extractf128_si256(bin_int_vec, 0);
+        __m128i bin_int_vec_high = _mm256_extractf128_si256(bin_int_vec, 1);
+        __m128 hist_update_low = _mm256_extractf128_ps(hist_update, 0);
+        __m128 hist_update_high = _mm256_extractf128_ps(hist_update, 1);
+
+        int temp_bins[8];
+        _mm_storeu_si128((__m128i*)temp_bins, bin_int_vec_low);
+        _mm_storeu_si128((__m128i*)(temp_bins + 4), bin_int_vec_high);
+
+        float temp_hist_updates[8];
+        _mm_storeu_ps(temp_hist_updates, hist_update_low);
+        _mm_storeu_ps(temp_hist_updates + 4, hist_update_high);
+        for (int j = 0; j < vecsize && i + j < len; ++j) {
+            int bin = temp_bins[j];
+            temp_hist[bin] += temp_hist_updates[j];
+        }
+    }
+
+    //平滑直方图
+    temp_hist[-1] = temp_hist[n - 1];
+    temp_hist[-2] = temp_hist[n - 2];
+    temp_hist[n] = temp_hist[0];
+    temp_hist[n + 1] = temp_hist[1];
+    for (int i = 0; i < n; i++)
+        hist[i] = (temp_hist[i - 2] + temp_hist[i + 2]) * 0.0625f +
+                  (temp_hist[i - 1] + temp_hist[i + 1]) * 0.25f +
+                  temp_hist[i] * 0.375f;
+    // float max_value = hist[0];
+    // for (int i = 1; i < n; ++i)
+    //     if (hist[i] > max_value)
+    //         max_value = hist[i];
+    int avx_iters = n - n % 8;
+    __m256 max_value_avx = _mm256_set1_ps(hist[0]);
+    int iter;
+    for (iter = 0; iter < avx_iters; iter += 8)
+    {
+        __m256 hist_avx = _mm256_loadu_ps(&hist[iter]);
+        max_value_avx = _mm256_max_ps(max_value_avx, hist_avx);
+    }
+    float max_value_array[8];
+    _mm256_storeu_ps(max_value_array, max_value_avx);
+
+    float max_value = max_value_array[0];
+    for (int i = 1; i < 8; ++i)
+    {
+        max_value = std::max(max_value, max_value_array[i]);
+    }
+    for (; iter < n; iter++) {
+        max_value = std::max(max_value, hist[iter]);
+    }
+
+    return max_value;
+}
+
+void SiftOmpandSIMD::find_scale_space_extrema(const std::vector<std::vector<cv::Mat>> &dogpyr,
                                        const std::vector<std::vector<cv::Mat>> &gpyr,
                                        std::vector<cv::KeyPoint> &kpts) const {
     kpts.clear();
@@ -1236,26 +1593,39 @@ void SiftOpencvPara::find_scale_space_extrema(const std::vector<std::vector<cv::
     calc_orientation(gpyr, kpts_mid, extrema_adjust, kpts);
 }
 
-void SiftOpencvPara::detect(const cv::Mat &image, std::vector<std::vector<cv::Mat>> &gpyr,
+void SiftOmpandSIMD::detect(const cv::Mat &image, std::vector<std::vector<cv::Mat>> &gpyr,
                      std::vector<std::vector<cv::Mat>> &dogpyr, std::vector<cv::KeyPoint> &kpts) const {
     if (image.empty() || image.depth() != CV_8U)
 		CV_Error(cv::Error::StsBadArg,"输入图像为空，或者图像深度不是CV_8U");
+    double t = 0;
 
 	//计算高斯金字塔组数
 	int nOctaves = num_octaves(image);
 
 	//生成高斯金字塔第一层图像
 	cv::Mat init_gauss;
+    t = (double)cv::getTickCount();
 	create_init_img(image, init_gauss);
+    t = ((double)cv::getTickCount() - t) / cv::getTickFrequency();
+    std::cout << "OmpandSIMD create_init_img algorithm time: " << t << std::endl;
 
 	//生成高斯尺度空间图像
+    t = (double)cv::getTickCount();
 	build_gaussian_pyramid(init_gauss, gpyr, nOctaves);
+    t = ((double)cv::getTickCount() - t) / cv::getTickFrequency();
+    std::cout << "OmpandSIMD build_gaussian_pyramid algorithm time: " << t << std::endl;
 
 	//生成高斯差分金字塔(DOG金字塔，or LOG金字塔)
+    t = (double)cv::getTickCount();
 	build_dog_pyramid(dogpyr, gpyr);
+    t = ((double)cv::getTickCount() - t) / cv::getTickFrequency();
+    std::cout << "OmpandSIMD build_dog_pyramid algorithm time: " << t << std::endl;
 
 	//在DOG金字塔上检测特征点
+    t = (double)cv::getTickCount();
 	find_scale_space_extrema(dogpyr, gpyr, kpts);
+    t = ((double)cv::getTickCount() - t) / cv::getTickFrequency();
+    std::cout << "OmpandSIMD find_scale_space_extrema algorithm time: " << t << std::endl;
 
 	if (nfeatures != 0 && nfeatures < (int)kpts.size())
 	{
@@ -1273,12 +1643,12 @@ void SiftOpencvPara::detect(const cv::Mat &image, std::vector<std::vector<cv::Ma
     }
 }
 
-void SiftOpencvPara::calc_sift_descriptor(const cv::Mat &gauss_image, float main_angle, cv::Point2f pt, float scale,
+void SiftOmpandSIMD::calc_sift_descriptor(const cv::Mat &gauss_image, float main_angle, cv::Point2f pt, float scale,
                                    int d, int n, float *desc) const {
     Sift::calc_sift_descriptor(gauss_image, main_angle, pt, scale, d, n, desc);
 }
 
-void SiftOpencvPara::compute(const std::vector<std::vector<cv::Mat>> &gpyr, const std::vector<cv::KeyPoint> &keypoints,
+void SiftOmpandSIMD::compute(const std::vector<std::vector<cv::Mat>> &gpyr, const std::vector<cv::KeyPoint> &keypoints,
                       cv::Mat &descriptors) const {
     int d = SIFT_DESCR_WIDTH;//d=4,特征点邻域网格个数是d x d
 	int n = SIFT_DESCR_HIST_BINS;//n=8,每个网格特征点梯度角度等分为8个方向
@@ -1297,103 +1667,96 @@ void SiftOpencvPara::compute(const std::vector<std::vector<cv::Mat>> &gpyr, cons
     } else {
         kpts = keypoints;   // shallow copy
     }
-    cv::parallel_for_(cv::Range(0, kpts_num), [&](const cv::Range &range) {
-       for (size_t i = range.start; i < range.end; ++i)//对于每一个特征点
-        {
-            //得到特征点所在的组号，层号
-            int octaves = kpts[i].octave & 255;
-            int layer = (kpts[i].octave >> 8) & 255;
+#pragma omp parallel for num_threads(nthreads) schedule(dynamic) default(none) shared(kpts_num, kpts, gpyr, descriptors, d, n)
+	for (size_t i = 0; i < kpts_num; ++i)//对于每一个特征点
+	{
+		//得到特征点所在的组号，层号
+		int octaves = kpts[i].octave & 255;
+		int layer = (kpts[i].octave >> 8) & 255;
 
-            //得到特征点相对于本组的坐标，不是最底层
-            cv::Point2f pt(kpts[i].pt.x / (float)(1 << octaves), kpts[i].pt.y / (float)(1 << octaves));
-            float scale = kpts[i].size / (float)(1 << octaves);//得到特征点相对于本组的尺度
-            float main_angle = kpts[i].angle;//特征点主方向
+		//得到特征点相对于本组的坐标，不是最底层
+		cv::Point2f pt(kpts[i].pt.x / (float)(1 << octaves), kpts[i].pt.y / (float)(1 << octaves));
+		float scale = kpts[i].size / (float)(1 << octaves);//得到特征点相对于本组的尺度
+		float main_angle = kpts[i].angle;//特征点主方向
 
-            //计算该点的描述子
-            calc_sift_descriptor(gpyr[octaves][layer], main_angle, pt, scale, d, n, descriptors.ptr<float>((int)i));
-        }
-    });
-
+		//计算该点的描述子
+		calc_sift_descriptor(gpyr[octaves][layer], main_angle, pt, scale, d, n, descriptors.ptr<float>((int)i));
+	}
 }
 
-void SiftOpencvPara::find_local_extrema(const std::vector<std::vector<cv::Mat>> &dogpyr, std::vector<LocalExtrema> &extrema) const {
+void SiftOmpandSIMD::find_local_extrema(const std::vector<std::vector<cv::Mat>> &dogpyr, std::vector<LocalExtrema> &extrema) const {
     extrema.clear();
     float threshold = (float)(contrastThreshold / nOctaveLayers);
     int nOctaves = dogpyr.size();
-    MyList<LocalExtrema> extrema_list[nthreads];
+    std::vector<std::vector<LocalExtrema>> threads_extrema(nthreads);
+#pragma omp parallel num_threads(nthreads) default(none) shared(nOctaves, dogpyr, threshold, threads_extrema, std::cout)
     for (int i = 0; i < nOctaves; ++i)//对于每一组
     {
         for (int j = 1; j <= nOctaveLayers; ++j)//对于组内每一层
         {
-            const cv::Mat &curr_img = dogpyr[i][j];
-            const cv::Mat &prev_img = dogpyr[i][j - 1];
+            const cv::Mat &curr_img = dogpyr[i][j];//当前层
+            const cv::Mat &prev_img = dogpyr[i][j - 1];//之前层
             const cv::Mat &next_img = dogpyr[i][j + 1];
             int num_row = curr_img.rows;
             int num_col = curr_img.cols;//获得当前组图像的大小
             size_t step = curr_img.step1();//一行元素所占宽度
-            cv::parallel_for_(cv::Range(SIFT_IMG_BORDER, num_row - SIFT_IMG_BORDER), [&](const cv::Range &range) {
-                for (int r = range.start; r < range.end; r++) {
-                    const float *curr_ptr = curr_img.ptr<float>(r);
-                    const float *prev_ptr = prev_img.ptr<float>(r);
-                    const float *next_ptr = next_img.ptr<float>(r);
-                    for (int c = SIFT_IMG_BORDER; c < num_col - SIFT_IMG_BORDER; ++c) {
-                        float val = curr_ptr[c];
-                        bool is_extrema = false;
-                        is_extrema = (abs(val) > threshold &&
-                                      ((val > 0 && val >= curr_ptr[c - 1] && val >= curr_ptr[c + 1] &&
-                                        val >= curr_ptr[c - step - 1] && val >= curr_ptr[c - step] &&
-                                        val >= curr_ptr[c - step + 1] &&
-                                        val >= curr_ptr[c + step - 1] && val >= curr_ptr[c + step] &&
-                                        val >= curr_ptr[c + step + 1] &&
+#pragma omp for schedule(dynamic) nowait
+            for (int r = SIFT_IMG_BORDER; r < num_row - SIFT_IMG_BORDER; ++r) {
+                const float *curr_ptr = curr_img.ptr<float>(r);
+                const float *prev_ptr = prev_img.ptr<float>(r);
+                const float *next_ptr = next_img.ptr<float>(r);
 
-                                        val >= prev_ptr[c] && val >= prev_ptr[c - 1] && val >= prev_ptr[c + 1] &&
-                                        val >= prev_ptr[c - step - 1] && val >= prev_ptr[c - step] &&
-                                        val >= prev_ptr[c - step + 1] &&
-                                        val >= prev_ptr[c + step - 1] && val >= prev_ptr[c + step] &&
-                                        val >= prev_ptr[c + step + 1] &&
+                for (int c = SIFT_IMG_BORDER; c < num_col - SIFT_IMG_BORDER; ++c) {
+                    float val = curr_ptr[c];
+                    bool is_extrema = false;
 
-                                        val >= next_ptr[c] && val >= next_ptr[c - 1] && val >= next_ptr[c + 1] &&
-                                        val >= next_ptr[c - step - 1] && val >= next_ptr[c - step] &&
-                                        val >= next_ptr[c - step + 1] &&
-                                        val >= next_ptr[c + step - 1] && val >= next_ptr[c + step] &&
-                                        val >= next_ptr[c + step + 1])
-                                       ||
-                                       (val < 0 && val <= curr_ptr[c - 1] && val <= curr_ptr[c + 1] &&
-                                        val <= curr_ptr[c - step - 1] && val <= curr_ptr[c - step] &&
-                                        val <= curr_ptr[c - step + 1] &&
-                                        val <= curr_ptr[c + step - 1] && val <= curr_ptr[c + step] &&
-                                        val <= curr_ptr[c + step + 1] &&
-
-                                        val <= prev_ptr[c] && val <= prev_ptr[c - 1] && val <= prev_ptr[c + 1] &&
-                                        val <= prev_ptr[c - step - 1] && val <= prev_ptr[c - step] &&
-                                        val <= prev_ptr[c - step + 1] &&
-                                        val <= prev_ptr[c + step - 1] && val <= prev_ptr[c + step] &&
-                                        val <= prev_ptr[c + step + 1] &&
-
-                                        val <= next_ptr[c] && val <= next_ptr[c - 1] && val <= next_ptr[c + 1] &&
-                                        val <= next_ptr[c - step - 1] && val <= next_ptr[c - step] &&
-                                        val <= next_ptr[c - step + 1] &&
-                                        val <= next_ptr[c + step - 1] && val <= next_ptr[c + step] &&
-                                        val <= next_ptr[c + step + 1])));
-                        if (is_extrema) {
-                            LocalExtrema e = {
+					// SIMD求得所有元素的最大值, 然后进行计算
+                    // 第一层元素存放:
+                    // 4X8 32个元素, 将32个元素存放到向量中进行比较(256)
+                    
+                    __m256 val_vec = _mm256_set1_ps(val);
+                    __m256 elements1 = _mm256_set_ps(curr_ptr[c - 1], curr_ptr[c + 1], curr_ptr[c - step - 1], curr_ptr[c - step],
+                                        curr_ptr[c - step + 1], curr_ptr[c + step - 1], curr_ptr[c + step], curr_ptr[c + step + 1]);
+                    __m256 elements2 = _mm256_set_ps(prev_ptr[c], prev_ptr[c - 1], prev_ptr[c + 1], prev_ptr[c - step - 1],
+                                        prev_ptr[c - step], prev_ptr[c - step + 1], prev_ptr[c + step - 1], prev_ptr[c + step]);
+                    __m256 elements3 = _mm256_set_ps(prev_ptr[c + step + 1], next_ptr[c], next_ptr[c - 1], next_ptr[c + 1],
+                                        next_ptr[c - step - 1], next_ptr[c - step], next_ptr[c - step + 1], next_ptr[c + step - 1]);
+                    __m256 elements4 = _mm256_set_ps(next_ptr[c + step], next_ptr[c + step + 1], threshold, threshold, threshold, threshold, threshold, threshold);
+                    __m256 elements5 = _mm256_set_ps(next_ptr[c + step], next_ptr[c + step + 1], -threshold, -threshold, -threshold, -threshold, -threshold, -threshold);
+                    // 然后进行两两比较
+                    __m256 max_values1 = _mm256_max_ps(elements1, elements2);
+                    __m256 max_values2 = _mm256_max_ps(elements3, elements4);
+                    __m256 max_values3 = _mm256_max_ps(max_values1, max_values2);
+                    __m256 max_result = _mm256_max_ps(val_vec, max_values3);
+                    __m256 min_values1 = _mm256_min_ps(elements1, elements2);
+                    __m256 min_values2 = _mm256_min_ps(elements3, elements5);
+                    __m256 min_values3 = _mm256_min_ps(min_values1, min_values2);
+                    __m256 min_result = _mm256_min_ps(val_vec, min_values3);
+                    // 比较最后的结果是否全部为val
+                    __m256 max_res = _mm256_cmp_ps(val_vec, max_result, _CMP_EQ_OQ);
+                    __m256 min_res = _mm256_cmp_ps(val_vec, min_result, _CMP_EQ_OQ);
+                    // 使用_mm256_movemask_ps将比较结果向量的符号位提取到一个整数中
+                    int max_mask = _mm256_movemask_ps(max_res);
+                    int min_mask = _mm256_movemask_ps(min_res);
+                    // 检查提取的掩码是否等于预期值（0xFF），以确定所有元素是否相等
+					is_extrema = (max_mask == 0xFF || min_mask == 0xFF);
+                    if (is_extrema) {
+                        {
+                            LocalExtrema le{
                                     .r = r,
                                     .c = c,
                                     .octave = i,
                                     .layer = j
                             };
-                            int thread_id = cv::getThreadNum();
-                            // std::cout << thread_id << std::endl;
-//                            extrema_list[thread_id].push_back(e);
+                            threads_extrema[omp_get_thread_num()].emplace_back(le);
                         }
                     }
                 }
-            });
+            }
         }
     }
-    for (int i = 0; i < nthreads; i++) {
-        std::vector<LocalExtrema> &thread_extrema = extrema_list[i].data;
-        extrema.insert(extrema.end(), thread_extrema.begin(), thread_extrema.end());
+    for (auto &e : threads_extrema) {
+        extrema.insert(extrema.end(), e.begin(), e.end());
     }
 
     // DEBUG:
@@ -1401,138 +1764,136 @@ void SiftOpencvPara::find_local_extrema(const std::vector<std::vector<cv::Mat>> 
 }
 
 void
-SiftOpencvPara::adjust(const std::vector<std::vector<cv::Mat>> &dogpyr, const std::vector<LocalExtrema> &extrema,
+SiftOmpandSIMD::adjust(const std::vector<std::vector<cv::Mat>> &dogpyr, const std::vector<LocalExtrema> &extrema,
                 std::vector<cv::KeyPoint> &kpts, std::vector<LocalExtrema> &extrema_adjust) const {
     kpts.clear();
     extrema_adjust.clear();
     int nExtrema = extrema.size();
     std::vector<std::vector<cv::KeyPoint>> threads_kpts(nthreads);
     std::vector<std::vector<LocalExtrema>> threads_extrema_adjust(nthreads);
-    cv::parallel_for_(cv::Range(0, nExtrema), [&](const cv::Range &range) {
-        for (int j = range.start; j < range.end; j++) {
-            int thread_id = cv::getThreadNum();
-            const LocalExtrema &e = extrema[j];
-            int octave = e.octave;
-            int layer = e.layer;
-            int row = e.r;
-            int col = e.c;
-            float xi = 0, xr = 0, xc = 0;
-            int i = 0;
-            bool not_take = false;
-            for (; i < SIFT_MAX_INTERP_STEPS; ++i)//最大迭代次数
-            {
-                const cv::Mat &img = dogpyr[octave][layer];//当前层图像索引
-                const cv::Mat &prev = dogpyr[octave][layer - 1];//之前层图像索引
-                const cv::Mat &next = dogpyr[octave][layer + 1];//下一层图像索引
+#pragma omp parallel for num_threads(nthreads) schedule(dynamic) default(none) shared(nExtrema, extrema, dogpyr, threads_kpts, threads_extrema_adjust)
+    for (int j = 0; j < nExtrema; j++) {
+        int thread_id = omp_get_thread_num();
+        const LocalExtrema &e = extrema[j];
+        int octave = e.octave;
+        int layer = e.layer;
+        int row = e.r;
+        int col = e.c;
+        float xi = 0, xr = 0, xc = 0;
+        int i = 0;
+        bool not_take = false;
+        for (; i < SIFT_MAX_INTERP_STEPS; ++i)//最大迭代次数
+        {
+            const cv::Mat &img = dogpyr[octave][layer];//当前层图像索引
+            const cv::Mat &prev = dogpyr[octave][layer - 1];//之前层图像索引
+            const cv::Mat &next = dogpyr[octave][layer + 1];//下一层图像索引
 
-                //特征点位置x方向，y方向,尺度方向的一阶偏导数
-                float dx = (img.at<float>(row, col + 1) - img.at<float>(row, col - 1)) * 0.5f;
-                float dy = (img.at<float>(row + 1, col) - img.at<float>(row - 1, col)) * 0.5f;
-                float dz = (next.at<float>(row, col) - prev.at<float>(row, col)) * 0.5f;
-
-                //计算特征点位置二阶偏导数
-                float v2 = img.at<float>(row, col);
-                float dxx = img.at<float>(row, col + 1) + img.at<float>(row, col - 1) - 2 * v2;
-                float dyy = img.at<float>(row + 1, col) + img.at<float>(row - 1, col) - 2 * v2;
-                float dzz = prev.at<float>(row, col) + next.at<float>(row, col) - 2 * v2;
-
-                //计算特征点周围混合二阶偏导数
-                float dxy = (img.at<float>(row + 1, col + 1) + img.at<float>(row - 1, col - 1) -
-                             img.at<float>(row + 1, col - 1) - img.at<float>(row - 1, col + 1)) * 0.25f;
-                float dxz = (next.at<float>(row, col + 1) + prev.at<float>(row, col - 1) -
-                             next.at<float>(row, col - 1) - prev.at<float>(row, col + 1)) * 0.25f;
-                float dyz = (next.at<float>(row + 1, col) + prev.at<float>(row - 1, col) -
-                             next.at<float>(row - 1, col) - prev.at<float>(row + 1, col)) * 0.25f;
-
-                cv::Matx33f H(dxx, dxy, dxz,
-                              dxy, dyy, dyz,
-                              dxz, dyz, dzz);
-
-                cv::Vec3f dD(dx, dy, dz);
-
-                // 用Hessian矩阵的逆矩阵乘以梯度向量，得到偏移量
-                cv::Vec3f X = H.solve(dD, cv::DECOMP_SVD);
-
-                xc = -X[0];//x方向偏移量
-                xr = -X[1];//y方向偏移量
-                xi = -X[2];//尺度方向偏移量
-
-                //如果三个方向偏移量都小于0.5，说明已经找到特征点准确位置
-                if (abs(xc) < 0.5f && abs(xr) < 0.5f && abs(xi) < 0.5f) {
-                    break;
-                }
-
-                //如果其中一个方向的偏移量过大，则删除该点
-                if (abs(xc) > (float) (INT_MAX / 3) ||
-                    abs(xr) > (float) (INT_MAX / 3) ||
-                    abs(xi) > (float) (INT_MAX / 3)) {
-                    not_take = true;
-                    break;
-                }
-
-                col += cvRound(xc);
-                row += cvRound(xr);
-                layer += cvRound(xi);
-
-                //如果特征点定位在边界区域，同样也需要删除
-                if (layer < 1 || layer > nOctaveLayers ||
-                    col < SIFT_IMG_BORDER || col > img.cols - SIFT_IMG_BORDER ||
-                    row < SIFT_IMG_BORDER || row > img.rows - SIFT_IMG_BORDER) {
-                    not_take = true;
-                    break;
-                }
-            }
-            if (not_take || i >= SIFT_MAX_INTERP_STEPS) {
-                continue;   // adjust the next extrema
-            }
-
-            // 再次删除低响应点
-            //再次计算特征点位置x方向，y方向,尺度方向的一阶偏导数
-            const cv::Mat &img = dogpyr[octave][layer];
-            const cv::Mat &prev = dogpyr[octave][layer - 1];
-            const cv::Mat &next = dogpyr[octave][layer + 1];
-
+            //特征点位置x方向，y方向,尺度方向的一阶偏导数
             float dx = (img.at<float>(row, col + 1) - img.at<float>(row, col - 1)) * 0.5f;
             float dy = (img.at<float>(row + 1, col) - img.at<float>(row - 1, col)) * 0.5f;
             float dz = (next.at<float>(row, col) - prev.at<float>(row, col)) * 0.5f;
-            cv::Matx31f dD(dx, dy, dz);
-            float t = dD.dot(cv::Matx31f(xc, xr, xi));
 
-            float contr = img.at<float>(row, col) + t * 0.5f;//特征点响应
-            if (abs(contr) < contrastThreshold / (float) nOctaveLayers) //Low建议contr阈值是0.03，但是RobHess等建议阈值为0.04/nOctaveLayers
-                continue;
-
-            // 删除边缘响应比较强的点
-            //再次计算特征点位置二阶偏导数
+            //计算特征点位置二阶偏导数
             float v2 = img.at<float>(row, col);
             float dxx = img.at<float>(row, col + 1) + img.at<float>(row, col - 1) - 2 * v2;
             float dyy = img.at<float>(row + 1, col) + img.at<float>(row - 1, col) - 2 * v2;
+            float dzz = prev.at<float>(row, col) + next.at<float>(row, col) - 2 * v2;
+
+            //计算特征点周围混合二阶偏导数
             float dxy = (img.at<float>(row + 1, col + 1) + img.at<float>(row - 1, col - 1) -
                          img.at<float>(row + 1, col - 1) - img.at<float>(row - 1, col + 1)) * 0.25f;
-            float det = dxx * dyy - dxy * dxy;
-            float trace = dxx + dyy;
-            if (det < 0 || (trace * trace * edgeThreshold >= det * (edgeThreshold + 1) * (edgeThreshold + 1)))
-                continue;
+            float dxz = (next.at<float>(row, col + 1) + prev.at<float>(row, col - 1) -
+                         next.at<float>(row, col - 1) - prev.at<float>(row, col + 1)) * 0.25f;
+            float dyz = (next.at<float>(row + 1, col) + prev.at<float>(row - 1, col) -
+                         next.at<float>(row - 1, col) - prev.at<float>(row + 1, col)) * 0.25f;
 
-            // 保存该特征点信息
-            threads_kpts[thread_id].emplace_back(
-                    ((float) col + xc) * (float) (1 << octave),
-                    ((float) row + xr) * (float) (1 << octave),
-                    sigma * powf(2.f, ((float) layer + xi) / (float) nOctaveLayers) * (float) (1 << octave),
-                    -1,
-                    abs(contr),
-                    octave + (layer << 8)
-                    );
-            threads_extrema_adjust[thread_id].emplace_back(
-                    LocalExtrema{
-                        .r = row,
-                        .c = col,
-                        .octave = octave,
-                        .layer = layer
-                    });
+            cv::Matx33f H(dxx, dxy, dxz,
+                          dxy, dyy, dyz,
+                          dxz, dyz, dzz);
+
+            cv::Vec3f dD(dx, dy, dz);
+
+            // 用Hessian矩阵的逆矩阵乘以梯度向量，得到偏移量
+            cv::Vec3f X = H.solve(dD, cv::DECOMP_SVD);
+
+            xc = -X[0];//x方向偏移量
+            xr = -X[1];//y方向偏移量
+            xi = -X[2];//尺度方向偏移量
+
+            //如果三个方向偏移量都小于0.5，说明已经找到特征点准确位置
+            if (abs(xc) < 0.5f && abs(xr) < 0.5f && abs(xi) < 0.5f) {
+                break;
+            }
+
+            //如果其中一个方向的偏移量过大，则删除该点
+            if (abs(xc) > (float) (INT_MAX / 3) ||
+                abs(xr) > (float) (INT_MAX / 3) ||
+                abs(xi) > (float) (INT_MAX / 3)) {
+                not_take = true;
+                break;
+            }
+
+            col += cvRound(xc);
+            row += cvRound(xr);
+            layer += cvRound(xi);
+
+            //如果特征点定位在边界区域，同样也需要删除
+            if (layer < 1 || layer > nOctaveLayers ||
+                col < SIFT_IMG_BORDER || col > img.cols - SIFT_IMG_BORDER ||
+                row < SIFT_IMG_BORDER || row > img.rows - SIFT_IMG_BORDER) {
+                not_take = true;
+                break;
+            }
         }
-    });
+        if (not_take || i >= SIFT_MAX_INTERP_STEPS) {
+            continue;   // adjust the next extrema
+        }
 
+        // 再次删除低响应点
+        //再次计算特征点位置x方向，y方向,尺度方向的一阶偏导数
+        const cv::Mat &img = dogpyr[octave][layer];
+        const cv::Mat &prev = dogpyr[octave][layer - 1];
+        const cv::Mat &next = dogpyr[octave][layer + 1];
+
+        float dx = (img.at<float>(row, col + 1) - img.at<float>(row, col - 1)) * 0.5f;
+        float dy = (img.at<float>(row + 1, col) - img.at<float>(row - 1, col)) * 0.5f;
+        float dz = (next.at<float>(row, col) - prev.at<float>(row, col)) * 0.5f;
+        cv::Matx31f dD(dx, dy, dz);
+        float t = dD.dot(cv::Matx31f(xc, xr, xi));
+
+        float contr = img.at<float>(row, col) + t * 0.5f;//特征点响应
+        if (abs(contr) < contrastThreshold / (float) nOctaveLayers) //Low建议contr阈值是0.03，但是RobHess等建议阈值为0.04/nOctaveLayers
+            continue;
+
+        // 删除边缘响应比较强的点
+        //再次计算特征点位置二阶偏导数
+        float v2 = img.at<float>(row, col);
+        float dxx = img.at<float>(row, col + 1) + img.at<float>(row, col - 1) - 2 * v2;
+        float dyy = img.at<float>(row + 1, col) + img.at<float>(row - 1, col) - 2 * v2;
+        float dxy = (img.at<float>(row + 1, col + 1) + img.at<float>(row - 1, col - 1) -
+                     img.at<float>(row + 1, col - 1) - img.at<float>(row - 1, col + 1)) * 0.25f;
+        float det = dxx * dyy - dxy * dxy;
+        float trace = dxx + dyy;
+        if (det < 0 || (trace * trace * edgeThreshold >= det * (edgeThreshold + 1) * (edgeThreshold + 1)))
+            continue;
+
+        // 保存该特征点信息
+        threads_kpts[thread_id].emplace_back(
+                ((float) col + xc) * (float) (1 << octave),
+                ((float) row + xr) * (float) (1 << octave),
+                sigma * powf(2.f, ((float) layer + xi) / (float) nOctaveLayers) * (float) (1 << octave),
+                -1,
+                abs(contr),
+                octave + (layer << 8)
+                );
+        threads_extrema_adjust[thread_id].emplace_back(
+                LocalExtrema{
+                    .r = row,
+                    .c = col,
+                    .octave = octave,
+                    .layer = layer
+                });
+    }
     for (int i = 0; i < nthreads; i++) {
         kpts.insert(kpts.end(), threads_kpts[i].begin(), threads_kpts[i].end());
         extrema_adjust.insert(extrema_adjust.end(), threads_extrema_adjust[i].begin(), threads_extrema_adjust[i].end());
@@ -1542,46 +1903,45 @@ SiftOpencvPara::adjust(const std::vector<std::vector<cv::Mat>> &dogpyr, const st
 }
 
 void
-SiftOpencvPara::calc_orientation(const std::vector<std::vector<cv::Mat>> &gpyr, const std::vector<cv::KeyPoint> &kpts,
+SiftOmpandSIMD::calc_orientation(const std::vector<std::vector<cv::Mat>> &gpyr, const std::vector<cv::KeyPoint> &kpts,
                           const std::vector<LocalExtrema> &extrema, std::vector<cv::KeyPoint> &kpts_res) const {
     int nKpts = kpts.size();
     int n = SIFT_ORI_HIST_BINS;
     std::vector<std::vector<cv::KeyPoint>> threads_kpts(nthreads);
-    cv::parallel_for_(cv::Range(0, nKpts), [&](const cv::Range &range) {
-        for (int j = range.start; j < range.end; j++) {
-            const LocalExtrema &e = extrema[j];
-            cv::KeyPoint kpt = kpts[j];
-            int r = e.r;
-            int c = e.c;
-            int octave = e.octave;
-            int layer = e.layer;
-            float hist[n];
-            float scale = kpts[j].size / float(1 << octave);
-            float max_hist = calc_orientation_hist(gpyr[octave][layer], cv::Point(c, r), scale, n, hist);
-            float mag_thr = max_hist * SIFT_ORI_PEAK_RATIO;
-            for (int i = 0; i < n; ++i) {
-                int left = 0, right = 0;
-                if (i == 0)
-                    left = n - 1;
-                else
-                    left = i - 1;
-                if (i == n - 1)
-                    right = 0;
-                else
-                    right = i + 1;
-                if (hist[i] > hist[left] && hist[i] > hist[right] && hist[i] >= mag_thr) {
-                    float bin = i + 0.5f * (hist[left] - hist[right]) / (hist[left] + hist[right] - 2 * hist[i]);
-                    if (bin < 0)
-                        bin += n;
-                    if (bin >= n)
-                        bin -= n;
+#pragma omp parallel for num_threads(nthreads) schedule(dynamic) default(none) shared(nKpts, kpts, extrema, gpyr, threads_kpts, n)
+    for (int j = 0; j < nKpts; j++) {
+        const LocalExtrema &e = extrema[j];
+        cv::KeyPoint kpt = kpts[j];
+        int r = e.r;
+        int c = e.c;
+        int octave = e.octave;
+        int layer = e.layer;
+        float hist[n];
+        float scale = kpts[j].size / float(1 << octave);
+        float max_hist = calc_orientation_hist(gpyr[octave][layer], cv::Point(c, r), scale, n, hist);
+        float mag_thr = max_hist * SIFT_ORI_PEAK_RATIO;
+        for (int i = 0; i < n; ++i) {
+            int left = 0, right = 0;
+            if (i == 0)
+                left = n - 1;
+            else
+                left = i - 1;
+            if (i == n - 1)
+                right = 0;
+            else
+                right = i + 1;
+            if (hist[i] > hist[left] && hist[i] > hist[right] && hist[i] >= mag_thr) {
+                float bin = i + 0.5f * (hist[left] - hist[right]) / (hist[left] + hist[right] - 2 * hist[i]);
+                if (bin < 0)
+                    bin += n;
+                if (bin >= n)
+                    bin -= n;
 
-                    kpt.angle = (360.f / n) * bin;//特征点的主方向0-360度
-                    threads_kpts[cv::getThreadNum()].emplace_back(kpt.pt, kpt.size, kpt.angle, kpt.response, kpt.octave, kpt.class_id);
-                }
+                kpt.angle = (360.f / n) * bin;//特征点的主方向0-360度
+                threads_kpts[omp_get_thread_num()].emplace_back(kpt.pt, kpt.size, kpt.angle, kpt.response, kpt.octave, kpt.class_id);
             }
         }
-    });
+    }
     for (int i = 0; i < nthreads; i++) {
         kpts_res.insert(kpts_res.end(), threads_kpts[i].begin(), threads_kpts[i].end());
     }

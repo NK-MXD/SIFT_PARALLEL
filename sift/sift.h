@@ -23,6 +23,13 @@ const int SIFT_DESCR_HIST_BINS = 8;              //每个网格中直方图角�
 const float SIFT_DESCR_MAG_THR = 0.2f;           //描述子幅度阈值
 const float SIFT_DESCR_SCL_FCTR = 3.0f;          //计算描述子时，每个网格的大小因子
 
+typedef struct {
+    int r;
+    int c;
+    int octave;
+    int layer;
+} LocalExtrema;
+
 class Sift
 {
 protected:
@@ -101,14 +108,6 @@ public:
     //计算特征点的描述子
     void compute(const std::vector<std::vector<cv::Mat>> &gpyr, const std::vector<cv::KeyPoint> &kpts, cv::Mat &desc) const;
 
-
-    typedef struct
-    {
-        int r;
-        int c;
-        int octave;
-        int layer;
-    } LocalExtrema;
     void find_local_extrema(const std::vector<std::vector<cv::Mat>> &dogpyr, std::vector<LocalExtrema> &extrema) const;
 
     void adjust(const std::vector<std::vector<cv::Mat>> &dogpyr, const std::vector<LocalExtrema> &extrema, std::vector<cv::KeyPoint> &kpts, std::vector<LocalExtrema> &extrema_adjust) const;
@@ -116,13 +115,30 @@ public:
     void calc_orientation(const std::vector<std::vector<cv::Mat>> &gpyr, const std::vector<cv::KeyPoint> &kpts, const std::vector<LocalExtrema> &extrema, std::vector<cv::KeyPoint> &kpts_res) const;
 };
 
-class SiftOpencvPara : public Sift
+class SiftSIMD : public Sift
+{
+public:
+    SiftSIMD(int nfeatures = 0, int nOctaveLayers = 3, double contrastThreshold = 0.04,
+            double edgeThreshold = 10.0, double sigma = 1.6, int firstOctave = -1) :
+            Sift(nfeatures, nOctaveLayers, contrastThreshold, edgeThreshold, sigma, firstOctave) {}
+    //特征点检测
+    void detect(const cv::Mat &image, std::vector<std::vector<cv::Mat>> &gpyr, std::vector<std::vector<cv::Mat>> &dogpyr, std::vector<cv::KeyPoint> &kpts) const;
+    
+    // 计算图像的梯度幅值和方向
+    float calc_orientation_hist(const cv::Mat &image, cv::Point pt, float scale, int n, float *hist) const;
+
+    //DOG金字塔特征点检测
+    void find_scale_space_extrema(const std::vector<std::vector<cv::Mat>> &dogpyr, const std::vector<std::vector<cv::Mat>> &gpyr, std::vector<cv::KeyPoint> &kpts) const;
+
+};
+
+class SiftOmpandSIMD : public Sift
 {
 protected:
-    int nthreads = cv::getNumThreads();
+    int nthreads = omp_get_max_threads();
 
 public:
-    SiftOpencvPara(int nthreads, int nfeatures = 0, int nOctaveLayers = 3, double contrastThreshold = 0.04,
+    SiftOmpandSIMD(int nthreads, int nfeatures = 0, int nOctaveLayers = 3, double contrastThreshold = 0.04,
             double edgeThreshold = 10.0, double sigma = 1.6, int firstOctave = -1) :
             Sift(nfeatures, nOctaveLayers, contrastThreshold, edgeThreshold, sigma, firstOctave), nthreads(nthreads) {}
 
@@ -147,21 +163,11 @@ public:
     //计算特征点的描述子
     void compute(const std::vector<std::vector<cv::Mat>> &gpyr, const std::vector<cv::KeyPoint> &kpts, cv::Mat &desc) const;
 
-
-    typedef struct
-    {
-        int r;
-        int c;
-        int octave;
-        int layer;
-    } LocalExtrema;
     void find_local_extrema(const std::vector<std::vector<cv::Mat>> &dogpyr, std::vector<LocalExtrema> &extrema) const;
 
     void adjust(const std::vector<std::vector<cv::Mat>> &dogpyr, const std::vector<LocalExtrema> &extrema, std::vector<cv::KeyPoint> &kpts, std::vector<LocalExtrema> &extrema_adjust) const;
 
     void calc_orientation(const std::vector<std::vector<cv::Mat>> &gpyr, const std::vector<cv::KeyPoint> &kpts, const std::vector<LocalExtrema> &extrema, std::vector<cv::KeyPoint> &kpts_res) const;
 };
-
-
 
 #endif //SIFT_SIFT_H
