@@ -1,0 +1,6 @@
+64
+sift_opencv_mt detect img0 time: 0.732572 , kpts0 size: 66539
+sift_opencv_mt compute img0 time: 0.72376
+sift_opencv_mt sift total time: 1.45633
+标准sift算法执行总时间： 0.870925s
+Our SIFT/Standard SIFT： 0.598
