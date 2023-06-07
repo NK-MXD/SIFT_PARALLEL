@@ -11,12 +11,15 @@ int main() {
     int devNum = 0;
     cv::Mat img1, img2;
     cv::Mat img1_u8, img2_u8;
-    img1_u8 = cv::imread("/home/guo/mypro/SIFT_PARALLEL/sift-cuda/assets/test1.jpg", 0);
-    img2_u8 = cv::imread("/home/guo/mypro/SIFT_PARALLEL/sift-cuda/assets/test2.jpg", 0);
+    img1_u8 = cv::imread("/home/guo/mypro/SIFT_PARALLEL/sift-cuda/assets/peacock.jpg", 0);
+    img2_u8 = cv::imread("/home/guo/mypro/SIFT_PARALLEL/sift-cuda/assets/peacock.jpg", 0);
     img1_u8.convertTo(img1, CV_32FC1);
     img2_u8.convertTo(img2, CV_32FC1);
     assert(img1.data && img2.data);
     assert(deviceInit(devNum));
+
+    double t = 0;
+    t = cv::getTickCount();
 
     CudaImage img1_cuda, img2_cuda;
     img1_cuda.Allocate(img1.cols, img1.rows, iAlignUp(img1.cols, 128), false, nullptr, (float *) img1.data);
@@ -38,7 +41,11 @@ int main() {
     ExtractSift(siftData2, img2_cuda, 5, initBlur, thresh, 0.0f, false, memoryTmp);
     FreeSiftTempMemory(memoryTmp);
 
-    matchAndDraw(siftData1, siftData2, img1_u8, img2_u8);
+    t = double ((cv::getTickCount()) - t);
+    std::cout << "Extraction time = " << t / cv::getTickFrequency() * 1000. << " ms" << std::endl;
+
+
+//    matchAndDraw(siftData1, siftData2, img1_u8, img2_u8);
 
     FreeSiftData(siftData1);
     FreeSiftData(siftData2);
