@@ -9,8 +9,11 @@
 
 #include "../Sar_sift.h"
 #include "../match.h"
+#include "omp.h"
 
-void test_sar_sift(){
+void test_sar_sift_omp(){
+    int nthreads = omp_get_max_threads();
+    std::cout<<"all threads number: "<<nthreads<<std::endl;
     /*------------------------------------------test1: 特征点提取例子------------------------------------------*/
     /*
     Sar_sift *sar_sift;
@@ -78,8 +81,8 @@ void test_sar_sift(){
 	// int nums_2 = image_2.rows*image_2.cols;
 	// int nFeatures_1 = cvRound((double)nums_1*0.008);
 	// int nFeatures_2 = cvRound((double)nums_2*0.008);
-	Sar_sift sar_sift_1(0, 8, 2, pow(2, 1.0 / 3.0), 0.8/5, 0.04);
-	Sar_sift sar_sift_2(0, 8, 2, pow(2, 1.0 / 3.0), 0.8/5, 0.04);
+	Sar_sift_Omp sar_sift_1(nthreads, 0, 8, 2, pow(2, 1.0 / 3.0), 0.8/5, 0.04);
+	Sar_sift_Omp sar_sift_2(nthreads, 0, 8, 2, pow(2, 1.0 / 3.0), 0.8/5, 0.04);
     cv::Ptr<cv::SIFT> standard_sift = cv::SIFT::create();
     //参考图像特征点检测与描述
 	vector<cv::KeyPoint> keypoints_1;

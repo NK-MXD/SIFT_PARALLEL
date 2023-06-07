@@ -10,4 +10,4 @@
 source ~/.bashrc
 module load compiler/cmake/3.23.1
 
-./build/sar_sift
+./build/sar-sift

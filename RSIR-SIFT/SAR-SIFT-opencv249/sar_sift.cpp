@@ -717,3 +717,208 @@ void Sar_sift::comput_des(const vector<KeyPoint> &keys, const vector<Mat> &ampli
 {
 	calc_descriptors(amplit, orient, keys, des);
 }
+
+void Sar_sift_Omp::build_sar_sift_space(const Mat &image, vector<Mat> &sar_harris_fun, vector<Mat> &amplit, vector<Mat> &orient)
+{
+	//转换输入图像格式
+	Mat gray_image;
+	if (image.channels() != 1)
+		cvtColor(image, gray_image, CV_RGB2GRAY);
+	else
+		gray_image = image;
+
+	//把图像转换为0-1之间的浮点数据
+	Mat float_image;
+	//在这里转换为0-1之间的浮点数据和转换为0-255之间的浮点数据，效果是一样的
+	//gray_image.convertTo(float_image, CV_32FC1, 1.f / 255.f, 0.f);//转换为0-1之间
+	gray_image.convertTo(float_image, CV_32FC1, 1, 0.f);//转换为0-255之间的浮点数
+
+	//分配内存
+	sar_harris_fun.resize(Mmax);
+	amplit.resize(Mmax);
+	orient.resize(Mmax);
+
+	// #pragma omp parallel for num_threads(nthreads) schedule(dynamic) default(none) shared(Mmax, sigma, ratio, float_image, amplit, orient, sar_harris_fun)
+	#pragma omp parallel for
+	for (int i = 0; i < Mmax; ++i)
+	{
+		float scale = (float)sigma*(float)pow(ratio, i);//获得当前层的尺度
+		int radius = cvRound(2 * scale);
+		Mat kernel;
+		roewa_kernel(radius, scale, kernel);
+
+		//四个滤波模板生成
+		Mat W34 = Mat::zeros(2 * radius + 1, 2 * radius + 1, CV_32FC1);
+		Mat W12 = Mat::zeros(2 * radius + 1, 2 * radius + 1, CV_32FC1);
+		Mat W14 = Mat::zeros(2 * radius + 1, 2 * radius + 1, CV_32FC1);
+		Mat W23 = Mat::zeros(2 * radius + 1, 2 * radius + 1, CV_32FC1);
+
+		kernel(Range(radius + 1, 2 * radius + 1), Range::all()).copyTo(W34(Range(radius + 1, 2 * radius + 1), Range::all()));
+		kernel(Range(0, radius), Range::all()).copyTo(W12(Range(0, radius), Range::all()));
+		kernel(Range::all(), Range(radius + 1, 2 * radius + 1)).copyTo(W14(Range::all(), Range(radius + 1, 2 * radius + 1)));
+		kernel(Range::all(), Range(0, radius)).copyTo(W23(Range::all(), Range(0, radius)));
+
+		//滤波
+		Mat M34, M12, M14, M23;
+		double eps = 0.00001;
+		filter2D(float_image, M34, CV_32FC1, W34, Point(-1, -1), eps);
+		filter2D(float_image, M12, CV_32FC1, W12, Point(-1, -1), eps);
+		filter2D(float_image, M14, CV_32FC1, W14,Point(-1, -1), eps);
+		filter2D(float_image, M23, CV_32FC1, W23, Point(-1, -1), eps);
+
+		//计算水平梯度和竖直梯度
+		Mat Gx, Gy;
+		log((M14) / (M23), Gx);
+		log((M34) / (M12), Gy);
+
+		//计算梯度幅度和梯度方向
+		magnitude(Gx, Gy, amplit[i]);
+		phase(Gx, Gy, orient[i], true);
+
+		//构建sar-Harris矩阵
+		//Mat Csh_11 = log(scale)*log(scale)*Gx.mul(Gx);
+		//Mat Csh_12 = log(scale)*log(scale)*Gx.mul(Gy);
+		//Mat Csh_22 = log(scale)*log(scale)*Gy.mul(Gy);
+
+		Mat Csh_11 = scale*scale*Gx.mul(Gx);
+		Mat Csh_12 = scale*scale*Gx.mul(Gy);
+		Mat Csh_22 = scale*scale*Gy.mul(Gy);//此时阈值为0.8
+
+		//Mat Csh_11 = Gx.mul(Gx);
+		//Mat Csh_12 = Gx.mul(Gy);
+		//Mat Csh_22 = Gy.mul(Gy);//此时阈值为0.8/100
+
+		//高斯权重
+		float gauss_sigma = sqrt(2.f)*scale;
+		int size = cvRound(3 * gauss_sigma);
+
+		Size kern_size(2 * size + 1, 2 * size + 1);
+		GaussianBlur(Csh_11, Csh_11, kern_size, gauss_sigma, gauss_sigma);
+		GaussianBlur(Csh_12, Csh_12, kern_size, gauss_sigma, gauss_sigma);
+		GaussianBlur(Csh_22, Csh_22, kern_size, gauss_sigma, gauss_sigma);
+
+		/*Mat gauss_kernel;//自定义圆形高斯核
+		gauss_circle(size, gauss_sigma, gauss_kernel);
+		filter2D(Csh_11, Csh_11, CV_32FC1, gauss_kernel);
+		filter2D(Csh_12, Csh_12, CV_32FC1, gauss_kernel);
+		filter2D(Csh_22, Csh_22, CV_32FC1, gauss_kernel);*/
+
+		Mat Csh_21 = Csh_12;
+
+		//构建sar_harris函数
+		Mat temp_add = Csh_11 + Csh_22;
+		sar_harris_fun[i] = Csh_11.mul(Csh_22) - Csh_21.mul(Csh_12) - (float)d*temp_add.mul(temp_add);
+	}
+}
+
+void Sar_sift_Omp::find_space_extrema(const vector<Mat> &harris_fun, const vector<Mat> &amplit, const vector<Mat> &orient, vector<KeyPoint> &keys)
+{
+	keys.clear();
+	int num_rows = harris_fun[0].rows;
+	int num_cols = harris_fun[0].cols;
+	const int n = SAR_SIFT_ORI_BINS;
+
+	KeyPoint keypoint;
+	// #pragma omp parallel for
+	for (int i = 0; i < Mmax; ++i)
+	{
+		const Mat &cur_harris_fun = harris_fun[i];
+		const Mat &cur_amplit = amplit[i];
+		const Mat &cur_orient = orient[i];
+
+		for (int r = SAR_SIFT_BORDER_CONSTANT; r < num_rows - SAR_SIFT_BORDER_CONSTANT; ++r)
+		{
+			const float *ptr_up = cur_harris_fun.ptr<float>(r-1);
+			const float *ptr_cur = cur_harris_fun.ptr<float>(r);
+			const float *ptr_nex = cur_harris_fun.ptr<float>(r+1);
+			for (int c = SAR_SIFT_BORDER_CONSTANT; c < num_cols - SAR_SIFT_BORDER_CONSTANT; ++c)
+			{
+				float cur_value = ptr_cur[c];
+				if (cur_value>threshold &&
+					cur_value>ptr_cur[c - 1] && cur_value > ptr_cur[c + 1] &&
+					cur_value > ptr_up[c - 1] && cur_value > ptr_up[c] && cur_value > ptr_up[c + 1] &&
+					cur_value > ptr_nex[c - 1] && cur_value > ptr_nex[c] && cur_value > ptr_nex[c + 1])
+				{
+					float x = c*1.0f; float y = r*1.0f; int layer = i;
+					float scale = (float)(sigma*pow(ratio, layer*1.0));
+					float hist[n];
+					float max_val;
+					max_val = calc_orient_hist(amplit[layer], orient[layer], Point2f(x, y), scale, hist, n);
+
+					float mag_thr = max_val*SAR_SIFT_ORI_RATIO;
+					for (int k = 0; k < n; ++k)
+					{
+						int k_left = k <= 0 ? n - 1 : k - 1;
+						int k_right = k >= n - 1 ? 0 : k + 1;
+						if (hist[k]>mag_thr && hist[k] >= hist[k_left] && hist[k] >= hist[k_right])
+						{
+							float bin = (float)k + 0.5f*(hist[k_left] - hist[k_right]) / (hist[k_left] + hist[k_right] - 2 * hist[k]);
+							if (bin < 0)
+								bin = bin + n;
+							if (bin >= n)
+								bin = bin - n;
+
+							keypoint.pt.x = x*1.0f;//特征点x方向坐标
+							keypoint.pt.y = y*1.0f;//特征单y方向坐标
+							keypoint.size = scale;//特征点尺度
+							keypoint.octave = i;//特征点所在层
+							keypoint.angle = (360.f / n)*bin;//特征点的主方向0-360度
+							keypoint.response = cur_value;//特征点响应值
+							keys.push_back(keypoint);//保存该特征点
+						}
+					}
+				}
+			}
+
+		}
+	}
+
+}
+
+void Sar_sift_Omp::calc_descriptors(const vector<Mat> &amplit, const vector<Mat> &orient, const vector<KeyPoint> &keys,Mat &descriptors)
+{
+	int d = SAR_SIFT_GLOH_ANG_GRID;//d=4或者d=8
+	int n = SAR_SIFT_DES_ANG_BINS;//n=8默认
+
+	int num_keys = (int)keys.size();
+	int grids = 2*d + 1;
+	descriptors.create(num_keys, grids*n,CV_32FC1);
+	#pragma omp parallel for
+	// #pragma omp parallel for
+	for (int i = 0; i < num_keys; ++i)
+	{
+		float *ptr_des = descriptors.ptr<float>(i);
+		Point2f point(keys[i].pt);//特征点位置
+		float scale = keys[i].size;//特征点所在层的尺度
+		int layer = keys[i].octave;//特征点所在层
+		float main_ori = keys[i].angle;//特征点主方向
+
+		//计算该特征点的特征描述子
+		calc_gloh_descriptor(amplit[layer], orient[layer], point, scale, main_ori,d, n,ptr_des);
+	}
+	
+}
+
+void Sar_sift_Omp::detect_keys(const Mat &image, vector<KeyPoint> &keys, vector<Mat> &harris_fun, vector<Mat> &amplit, vector<Mat> &orient)
+{
+	build_sar_sift_space(image, harris_fun, amplit, orient);
+
+	find_space_extrema(harris_fun, amplit, orient, keys);
+
+	nFeatures = min(nFeatures, SAR_SIFT_MAX_KEYPOINTS);//不能超过最大特征点个数
+	if (nFeatures != 0 && nFeatures< (int)keys.size())
+	{
+		//特征点响应值从大到小排序
+		sort(keys.begin(), keys.end(),
+			[](const KeyPoint &a, const KeyPoint &b)
+		{return a.response>b.response; });
+
+		//删除点多余的特征点
+		keys.erase(keys.begin() + nFeatures, keys.end());
+	}
+}
+
+void Sar_sift_Omp::comput_des(const vector<KeyPoint> &keys, const vector<Mat> &amplit, const vector<Mat> &orient, Mat &des)
+{
+	calc_descriptors(amplit, orient, keys, des);
+}
