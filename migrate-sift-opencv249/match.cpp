@@ -36,11 +36,11 @@ static Mat LMS(const Mat&match1_xy, const Mat &match2_xy, string model, float &r
 	transpose(match1_xy, match1_xy_trans);
 	transpose(match2_xy, match2_xy_trans);
 
-	Mat change = Mat::zeros(3, 3, CV_32FC1);
+	Mat change = Mat::zeros(3, 3, CV_32F);
 
 	//A*X=B,接下来部分仿射变换和透视变换一样,如果特征点个数是M，则A=[2*M,6]矩阵
 	//A=[x1,y1,0,0,1,0;0,0,x1,y1,0,1;.....xn,yn,0,0,1,0;0,0,xn,yn,0,1]
-	Mat A = Mat::zeros(2*N,6,CV_32FC1);
+	Mat A = Mat::zeros(2*N,6,CV_32F);
 	for (int i = 0; i < N; ++i)
 	{
 		A.at<float>(2 * i, 0) = match2_xy.at<float>(i, 0);//x
@@ -55,7 +55,7 @@ static Mat LMS(const Mat&match1_xy, const Mat &match2_xy, string model, float &r
 	//如果特征点个数是M,那个B=[2*M,1]矩阵
 	//B=[u1,v1,u2,v2,.....,un,vn]
 	Mat B;
-	B.create(2 * N, 1, CV_32FC1);
+	B.create(2 * N, 1, CV_32F);
 	for (int i = 0; i < N; ++i)
 	{
 		B.at<float>(2 * i, 0) = match1_xy.at<float>(i, 0);//x
@@ -91,7 +91,7 @@ static Mat LMS(const Mat&match1_xy, const Mat &match2_xy, string model, float &r
 		即，Y = A*X     */
 
 		Mat A2;
-		A2.create(2 * N, 2, CV_32FC1);
+		A2.create(2 * N, 2, CV_32F);
 		for (int i = 0; i < N; ++i)
 		{
 			A2.at<float>(2*i, 0) = match1_xy.at<float>(i, 0)*match2_xy.at<float>(i, 0)*(-1.f);
@@ -102,7 +102,7 @@ static Mat LMS(const Mat&match1_xy, const Mat &match2_xy, string model, float &r
 		}
 
 		Mat A1;
-		A1.create(2 * N, 8, CV_32FC1);
+		A1.create(2 * N, 8, CV_32F);
 		A.copyTo(A1(Range::all(), Range(0, 6)));
 		A2.copyTo(A1(Range::all(), Range(6, 8)));
 
@@ -118,9 +118,9 @@ static Mat LMS(const Mat&match1_xy, const Mat &match2_xy, string model, float &r
 		change.at<float>(2, 1) = values.at<float>(7);
 		change.at<float>(2, 2) = 1.f;
 
-		Mat temp1 = Mat::ones(1, N, CV_32FC1);
+		Mat temp1 = Mat::ones(1, N, CV_32F);
 		Mat temp2;
-		temp2.create(3, N, CV_32FC1);
+		temp2.create(3, N, CV_32F);
 		match2_xy_trans.copyTo(temp2(Range(0, 2), Range::all()));
 		temp1.copyTo(temp2(Range(2, 3), Range::all()));
 
@@ -144,7 +144,7 @@ static Mat LMS(const Mat&match1_xy, const Mat &match2_xy, string model, float &r
 		  y, -x, 0, 1] * [a, b, c, d]'=[u,v]*/
 
 		Mat A3;
-		A3.create(2 * N, 4, CV_32FC1);
+		A3.create(2 * N, 4, CV_32F);
 		for (int i = 0; i < N; ++i)
 		{
 			A3.at<float>(2 * i, 0) = match2_xy.at<float>(i, 0);
@@ -217,8 +217,8 @@ Mat ransac(const vector<Point2f> &points_1, const vector<Point2f> &points_2, str
 
 	//取出保存在points_1和points_2中的点坐标，保存在Mat矩阵中，方便处理
 	Mat arr_1, arr_2;//arr_1,和arr_2是一个[3 x N]的矩阵，每一列表示一个点坐标,第三行全是1
-	arr_1.create(3, N, CV_32FC1);
-	arr_2.create(3, N, CV_32FC1);
+	arr_1.create(3, N, CV_32F);
+	arr_2.create(3, N, CV_32F);
 	float *p10 = arr_1.ptr<float>(0), *p11 = arr_1.ptr<float>(1),*p12 = arr_1.ptr<float>(2);
 	float *p20 = arr_2.ptr<float>(0), *p21 = arr_2.ptr<float>(1), *p22 = arr_2.ptr<float>(2);
 	for (size_t i = 0; i < N; ++i)
@@ -236,8 +236,8 @@ Mat ransac(const vector<Point2f> &points_1, const vector<Point2f> &points_2, str
 	rand_mat.create(1, n, CV_32SC1);
 	int *p = rand_mat.ptr<int>(0);
 	Mat sub_arr1, sub_arr2;
-	sub_arr1.create(n, 2, CV_32FC1);
-	sub_arr2.create(n, 2, CV_32FC1);
+	sub_arr1.create(n, 2, CV_32F);
+	sub_arr2.create(n, 2, CV_32F);
 	Mat T;//待配准图像到参考图像的变换矩阵
 	int most_consensus_num = 0;//当前最优一致集个数初始化为0
 	vector<bool> right;
@@ -374,8 +374,8 @@ Mat ransac(const vector<Point2f> &points_1, const vector<Point2f> &points_2, str
 
 	//迭代结束，获得最优一致集合，根据这些最优一致集合计算出最终的变换关系T
 	Mat consensus_arr1, consensus_arr2;
-	consensus_arr1.create(most_consensus_num, 2, CV_32FC1);
-	consensus_arr2.create(most_consensus_num, 2, CV_32FC1);
+	consensus_arr1.create(most_consensus_num, 2, CV_32F);
+	consensus_arr2.create(most_consensus_num, 2, CV_32F);
 	int k = 0;
 	for (size_t i = 0; i < N; ++i)
 	{
@@ -773,7 +773,7 @@ void image_fusion(const Mat &image_1, const Mat &image_2, const Mat T, Mat &fusi
 	vector<DMatch> match;
 	match.resize(2);
 	Mat temp_dis;
-	temp_dis.create(1, num_des_2, CV_32FC1);
+	temp_dis.create(1, num_des_2, CV_32F);
 	float *ptr_dis = temp_dis.ptr<float>(0);
 	for (int i = 0; i < num_des_1; ++i)
 	{

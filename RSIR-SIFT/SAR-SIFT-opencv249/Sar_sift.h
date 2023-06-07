@@ -3,7 +3,7 @@
 
 #include<opencv2/core/core.hpp>
 #include<opencv2/features2d/features2d.hpp>
-
+#include "omp.h"
 #include<iostream>
 
 using namespace std;
@@ -69,6 +69,43 @@ private:
 	double threshold;//Harris函数响应阈值,默认是0.8
 	double d = 0.04;//sar_haiirs函数表达式中的任意参数，默认是0.04
 };
+
+class Sar_sift_Omp: public Sar_sift
+{
+protected:
+    int nthreads = omp_get_max_threads();
+public:
+	//默认构造函数
+	Sar_sift_Omp(int nthreads, int nFeatures = 0, int Mmax = 8, double sigma = 2.0, double ratio = pow(2, 1.0 / 3.0),
+		double threshold = 0.8,double d=0.04) :
+		nFeatures(nFeatures), Mmax(Mmax),sigma(sigma), ratio(ratio), 
+		threshold(threshold),d(d), nthreads(nthreads){}
+
+	//该函数构建sar_harris尺度空间
+	void build_sar_sift_space(const Mat &image, vector<Mat> &sar_harris_fun, vector<Mat> &gradient, vector<Mat> &orient);
+
+	//该函数在尺度空间进度局部极值点检测
+	void find_space_extrema(const vector<Mat> &harris_fun, const vector<Mat> &amplit, const vector<Mat> &orient, vector<KeyPoint> &keys);
+
+	//该函数生成特征点的特征描述子
+	void calc_descriptors(const vector<Mat> &amplit, const vector<Mat> &orient, const vector<KeyPoint> &keys, Mat &descriptors);
+
+	//检测特征点
+	void detect_keys(const Mat &image, vector<KeyPoint> &keys, vector<Mat> &harris_fun, vector<Mat> &amplit, vector<Mat> &orient);
+
+	//描述子生成
+	void comput_des(const vector<KeyPoint> &keys, const vector<Mat> &amplit, const vector<Mat> &orient, Mat &des);
+
+
+private:
+	int nFeatures;//特征点个数设定,如果为0，表示不限定特征点个数
+	int Mmax;//尺度空间层数,默认是8
+	double sigma;//初始层的尺度，默认是2
+	double ratio;//相邻两层的尺度比,默认是2^(1/3)
+	double threshold;//Harris函数响应阈值,默认是0.8
+	double d = 0.04;//sar_haiirs函数表达式中的任意参数，默认是0.04
+};
+
 
 
 

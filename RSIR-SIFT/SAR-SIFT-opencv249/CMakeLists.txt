@@ -20,6 +20,6 @@ endif()
 
 include_directories(${OpenCV_INCLUDE_DIRS})
 
-add_executable(sar-sift main.cpp match.cpp match.h sar_sift.cpp Sar_sift.h demo/test_sar_sift.cpp)
+add_executable(sar-sift main.cpp match.cpp match.h sar_sift.cpp Sar_sift.h demo/test_sar_sift.cpp demo/test_sar_sift_omp.cpp)
 
 target_link_libraries(sar-sift ${OpenCV_LIBS})

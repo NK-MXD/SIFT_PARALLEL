@@ -49,7 +49,7 @@ void  mosaic_pyramid(const vector<vector<Mat>> &pyramid, Mat &pyramid_image, int
 			accumulate_col = accumulate_col + temp_size[i][1];
 			Mat temp(pyramid_image, Rect(accumulate_col - temp_size[i][1], accumulate_row - temp_size[i][0], it->cols, it->rows));
 			Mat temp_it;
-			normalize(*it, temp_it, 0, 255, NORM_MINMAX, CV_32FC1);
+			normalize(*it, temp_it, 0, 255, NORM_MINMAX, CV_32F);
 			convertScaleAbs(temp_it, temp_it, 1, 0);
 			temp_it.copyTo(temp);
 		}
