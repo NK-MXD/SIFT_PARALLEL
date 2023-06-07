@@ -23,3 +23,14 @@ $ cmake build .
 $ make
 $ ./sift
 ```
+
+## CPU并行结果图像
+
+![5_detect.png](https://image-1305894911.cos.ap-beijing.myqcloud.com/Obsidian/202306071505377.png)
+![5_compute.png](https://image-1305894911.cos.ap-beijing.myqcloud.com/Obsidian/202306071505279.png)
+![5_kpts.png](https://image-1305894911.cos.ap-beijing.myqcloud.com/Obsidian/202306071505422.png)
+![5_total.png](https://image-1305894911.cos.ap-beijing.myqcloud.com/Obsidian/202306071505762.png)
+
+## SAR-SIFT算法结果图像
+
+![正确匹配特征点连线图.jpg|500](https://image-1305894911.cos.ap-beijing.myqcloud.com/Obsidian/202306071506831.jpg)
