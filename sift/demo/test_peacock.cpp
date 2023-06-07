@@ -22,7 +22,7 @@ void test_peacock() {
     cv::cvtColor(img1, img1_gray, cv::COLOR_BGR2GRAY);
 //    cv::cvtColor(img2, img2_gray, cv::COLOR_BGR2GRAY);
 
-    sift = new SiftOmp(4);
+    sift = new SiftOmp(1);
 
     t = (double)cv::getTickCount();
     sift->detect(img1_gray, gpyr1, dogpyr1, kpts1);
