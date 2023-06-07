@@ -54,6 +54,8 @@ void test_multithreading() {
             good_matches.push_back(matches[i][0]);
         }
     }
+    // cout max omp threads
+    std::cout << "sift_opencv_mt max threads: " << omp_get_max_threads() << std::endl;
     std::cout << "sift_opencv_mt good matches size: " << good_matches.size() << std::endl;
 
     cv::drawMatches(img1, kpts1, img2, kpts2, good_matches, img_match);
