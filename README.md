@@ -25,15 +25,15 @@ $ ./sift
 ```
 
 ## CPU并行结果图像
-<figure>
-<img src="https://image-1305894911.cos.ap-beijing.myqcloud.com/Obsidian/202306071505377.png" width=200/>
-<img src="https://image-1305894911.cos.ap-beijing.myqcloud.com/Obsidian/202306071505279.png" width=200/>
-</figure>
+<center class="half">
+<img src="https://image-1305894911.cos.ap-beijing.myqcloud.com/Obsidian/202306071505377.png" width=500/>
+<img src="https://image-1305894911.cos.ap-beijing.myqcloud.com/Obsidian/202306071505279.png" width=500/>
+</center>
 
-<figure>
-<img src="https://image-1305894911.cos.ap-beijing.myqcloud.com/Obsidian/202306071505762.png" width=200/>
-<img src="https://image-1305894911.cos.ap-beijing.myqcloud.com/Obsidian/202306071505422.png" width=200/>
-</figure>
+<center class="half">
+<img src="https://image-1305894911.cos.ap-beijing.myqcloud.com/Obsidian/202306071505762.png" width=500/>
+<img src="https://image-1305894911.cos.ap-beijing.myqcloud.com/Obsidian/202306071505422.png" width=500/>
+</center>
 
 ## SAR-SIFT算法结果图像
 
