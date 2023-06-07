@@ -26,8 +26,8 @@ $ ./sift
 
 ## CPU并行结果图像
 
-![5_detect.png|500](https://image-1305894911.cos.ap-beijing.myqcloud.com/Obsidian/202306071505377.png)![5_compute.png|500](https://image-1305894911.cos.ap-beijing.myqcloud.com/Obsidian/202306071505279.png)
-![5_total.png|500](https://image-1305894911.cos.ap-beijing.myqcloud.com/Obsidian/202306071505762.png)![5_kpts.png|500](https://image-1305894911.cos.ap-beijing.myqcloud.com/Obsidian/202306071505422.png)
+![5_detect.png|300](https://image-1305894911.cos.ap-beijing.myqcloud.com/Obsidian/202306071505377.png)![5_compute.png|300](https://image-1305894911.cos.ap-beijing.myqcloud.com/Obsidian/202306071505279.png)
+![5_total.png|300](https://image-1305894911.cos.ap-beijing.myqcloud.com/Obsidian/202306071505762.png)![5_kpts.png|300](https://image-1305894911.cos.ap-beijing.myqcloud.com/Obsidian/202306071505422.png)
 
 
 ## SAR-SIFT算法结果图像
