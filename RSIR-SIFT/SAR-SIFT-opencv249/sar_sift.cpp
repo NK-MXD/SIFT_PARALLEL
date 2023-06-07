@@ -739,7 +739,7 @@ void Sar_sift_Omp::build_sar_sift_space(const Mat &image, vector<Mat> &sar_harri
 	orient.resize(Mmax);
 
 	// #pragma omp parallel for num_threads(nthreads) schedule(dynamic) default(none) shared(Mmax, sigma, ratio, float_image, amplit, orient, sar_harris_fun)
-	#pragma omp parallel for
+	#pragma omp parallel for num_threads(nthreads)
 	for (int i = 0; i < Mmax; ++i)
 	{
 		float scale = (float)sigma*(float)pow(ratio, i);//获得当前层的尺度
@@ -819,13 +819,13 @@ void Sar_sift_Omp::find_space_extrema(const vector<Mat> &harris_fun, const vecto
 	const int n = SAR_SIFT_ORI_BINS;
 
 	KeyPoint keypoint;
-	// #pragma omp parallel for
+	// #pragma omp parallel for num_threads(nthreads) 
 	for (int i = 0; i < Mmax; ++i)
 	{
 		const Mat &cur_harris_fun = harris_fun[i];
 		const Mat &cur_amplit = amplit[i];
 		const Mat &cur_orient = orient[i];
-
+		// #pragma omp parallel for
 		for (int r = SAR_SIFT_BORDER_CONSTANT; r < num_rows - SAR_SIFT_BORDER_CONSTANT; ++r)
 		{
 			const float *ptr_up = cur_harris_fun.ptr<float>(r-1);
@@ -883,7 +883,7 @@ void Sar_sift_Omp::calc_descriptors(const vector<Mat> &amplit, const vector<Mat>
 	int num_keys = (int)keys.size();
 	int grids = 2*d + 1;
 	descriptors.create(num_keys, grids*n,CV_32FC1);
-	#pragma omp parallel for
+	#pragma omp parallel for num_threads(nthreads) 
 	// #pragma omp parallel for
 	for (int i = 0; i < num_keys; ++i)
 	{
