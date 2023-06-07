@@ -9,7 +9,6 @@
 #include <opencv2/core/hal/hal.hpp>
 
 #include "sift.h"
-#include "mylist.h"
 
 int Sift::num_octaves(const cv::Mat &img) const 
 {
